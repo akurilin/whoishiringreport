@@ -10,10 +10,21 @@ import csv
 import datetime as dt
 import html
 import json
+import os
 import re
+import time
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import requests
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 SEARCH_URL = "https://hn.algolia.com/api/v1/search_by_date"
 HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
@@ -206,6 +217,131 @@ def write_json(data: List[Dict], output_path: str) -> None:
         json.dump(data, jsonfile, indent=2, ensure_ascii=False)
 
 
+def extract_job_info_with_llm(
+    content: str, client: Optional[OpenAI] = None, matched_text: Optional[str] = None
+) -> Dict:
+    """Extract job posting information using OpenAI's LLM.
+
+    Args:
+        content: The full_content text from a match
+        client: OpenAI client instance (will create if None)
+        matched_text: The specific text that was matched (e.g., "Engineering Manager", "Head of Engineering")
+                     This helps focus extraction on the specific role of interest.
+
+    Returns:
+        Dictionary with extracted fields:
+        - company_name: str or None
+        - role_name: str or None (should be the specific role that matches matched_text if provided)
+        - is_remote: bool or None
+        - location: str or None
+        - employment_type: str or None (Full-time, Part-time, Contract, Fractional)
+        - cash_compensation: str or None (original format, e.g., "$160k–$250k")
+        - equity_compensation: bool or None (or str if description provided)
+    """
+    if OpenAI is None:
+        return {
+            "company_name": None,
+            "role_name": None,
+            "is_remote": None,
+            "location": None,
+            "employment_type": None,
+            "cash_compensation": None,
+            "equity_compensation": None,
+            "extraction_error": "OpenAI library not installed",
+        }
+
+    if client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return {
+                "company_name": None,
+                "role_name": None,
+                "is_remote": None,
+                "location": None,
+                "employment_type": None,
+                "cash_compensation": None,
+                "equity_compensation": None,
+                "extraction_error": "OPENAI_API_KEY not found in environment",
+            }
+        client = OpenAI(api_key=api_key)
+
+    try:
+        # Clean HTML tags for better extraction (keep text content)
+        # Simple approach: remove common HTML tags
+        cleaned_content = re.sub(r"<[^>]+>", " ", content)
+        cleaned_content = re.sub(r"\s+", " ", cleaned_content).strip()
+
+        # Truncate if too long (keep first 4000 chars to stay within token limits)
+        if len(cleaned_content) > 4000:
+            cleaned_content = cleaned_content[:4000] + "..."
+
+        # Use model from environment or default to gpt-4o (fast, non-thinking model)
+        model = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+        # Build the user prompt with context about what role to focus on
+        role_focus = ""
+        if matched_text:
+            role_focus = f"\n\nIMPORTANT: This posting was matched for the role '{matched_text}'. Please extract the SPECIFIC role that matches or contains this text (e.g., if matched_text is 'Engineering Manager', extract 'Engineering Manager' or 'Engineering Manager, Deep Learning Inference', not other unrelated roles). If the posting lists multiple roles, extract the one that matches '{matched_text}'."
+
+        system_prompt = """You are a job posting data extractor. Extract the following information from job postings and return ONLY valid JSON with no additional text:
+
+Fields to extract:
+- company_name: The name of the company (string or null)
+- role_name: The SPECIFIC role/title that matches the matched_text if provided, or the primary engineering management role mentioned (string or null). If multiple roles are listed, extract the one that matches the matched_text.
+- is_remote: Whether the role is remote (boolean: true/false/null). Consider "remote-friendly", "remote-first", "hybrid" as true for remote capability.
+- location: Physical location if specified, or remote location preference (string or null, e.g., "Buffalo, NY", "SF / NYC / DC", "North America preferred")
+- employment_type: One of "Full-time", "Part-time", "Contract", "Fractional", or null. Normalize variations like "Full Time", "Full-Time" to "Full-time".
+- cash_compensation: Salary/compensation range in original format (string or null, e.g., "$160k–$250k", "$130,000 - $250,000"). Include any salary/compensation mentioned.
+- equity_compensation: Whether equity is mentioned (boolean: true/false/null) or description if provided (string). Look for terms like "equity", "stock options", "ownership".
+
+Return JSON only, no markdown formatting, no explanations."""
+
+        user_content = f"Extract job information from this posting:{role_focus}\n\n{cleaned_content}"
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt,
+                },
+                {
+                    "role": "user",
+                    "content": user_content,
+                },
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,  # Deterministic output
+        )
+
+        extracted = json.loads(response.choices[0].message.content)
+
+        # Ensure all expected fields are present
+        result = {
+            "company_name": extracted.get("company_name"),
+            "role_name": extracted.get("role_name"),
+            "is_remote": extracted.get("is_remote"),
+            "location": extracted.get("location"),
+            "employment_type": extracted.get("employment_type"),
+            "cash_compensation": extracted.get("cash_compensation"),
+            "equity_compensation": extracted.get("equity_compensation"),
+        }
+
+        return result
+
+    except Exception as e:
+        return {
+            "company_name": None,
+            "role_name": None,
+            "is_remote": None,
+            "location": None,
+            "employment_type": None,
+            "cash_compensation": None,
+            "equity_compensation": None,
+            "extraction_error": str(e),
+        }
+
+
 def compile_engineering_management_patterns() -> List[Tuple[re.Pattern, str]]:
     """Compile regex patterns for matching engineering management roles.
 
@@ -257,11 +393,14 @@ def compile_engineering_management_patterns() -> List[Tuple[re.Pattern, str]]:
     return patterns
 
 
-def search_engineering_management_roles(comments_path: str) -> List[Dict]:
+def search_engineering_management_roles(
+    comments_path: str, extract_with_llm: bool = True
+) -> List[Dict]:
     """Search comments for engineering management role postings.
 
     Args:
         comments_path: Path to JSON file containing comments
+        extract_with_llm: Whether to extract structured data using LLM (default: True)
 
     Returns:
         List of match dictionaries with comment info and matched text
@@ -276,6 +415,26 @@ def search_engineering_management_roles(comments_path: str) -> List[Dict]:
     # Compile patterns
     patterns = compile_engineering_management_patterns()
     print(f"Using {len(patterns)} search patterns")
+
+    # Initialize OpenAI client if extraction is enabled
+    client = None
+    if extract_with_llm:
+        if OpenAI is None:
+            print("Warning: OpenAI library not installed. Skipping LLM extraction.")
+            print("Install with: pip install openai python-dotenv")
+            extract_with_llm = False
+        else:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                print(
+                    "Warning: OPENAI_API_KEY not found in environment. Skipping LLM extraction."
+                )
+                print("Create a .env file with: OPENAI_API_KEY=your_key_here")
+                extract_with_llm = False
+            else:
+                client = OpenAI(api_key=api_key)
+                model = os.getenv("OPENAI_MODEL", "gpt-4o")
+                print(f"LLM extraction enabled (using {model})")
 
     matches = []
 
@@ -301,22 +460,42 @@ def search_engineering_management_roles(comments_path: str) -> List[Dict]:
                 end = min(len(decoded_content), match.end() + 100)
                 context = decoded_content[start:end]
 
-                matches.append(
-                    {
-                        "comment_index": idx,
-                        "post_url": comment.get("post_url", ""),
-                        "commenter": comment.get("commenter", ""),
-                        "date": comment.get("date", ""),
-                        "matched_text": match.group(0),
-                        "pattern_name": pattern_name,
-                        "context": context,
-                        "full_content": decoded_content,  # Include full content for review
-                    }
-                )
+                match_dict = {
+                    "comment_index": idx,
+                    "post_url": comment.get("post_url", ""),
+                    "commenter": comment.get("commenter", ""),
+                    "date": comment.get("date", ""),
+                    "matched_text": match.group(0),
+                    "pattern_name": pattern_name,
+                    "context": context,
+                    "full_content": decoded_content,  # Include full content for review
+                }
+
+                # Extract structured data using LLM if enabled
+                if extract_with_llm and client:
+                    if len(matches) % 10 == 0 and len(matches) > 0:
+                        print(f"  Extracting data for match {len(matches)}...")
+                    extracted = extract_job_info_with_llm(
+                        decoded_content, client, matched_text=match.group(0)
+                    )
+                    match_dict["extracted"] = extracted
+                    # Small delay to avoid rate limits (can be removed if using batch processing)
+                    time.sleep(0.1)
+
+                matches.append(match_dict)
                 # Only record first match per pattern per comment to avoid duplicates
                 break
 
     print(f"\nFound {len(matches)} total matches")
+    if extract_with_llm:
+        successful_extractions = sum(
+            1
+            for m in matches
+            if m.get("extracted") and not m.get("extracted", {}).get("extraction_error")
+        )
+        print(
+            f"Successfully extracted data for {successful_extractions}/{len(matches)} matches"
+        )
     return matches
 
 
@@ -333,6 +512,11 @@ def parse_args() -> argparse.Namespace:
         "--search-eng-management",
         action="store_true",
         help="Mode: search comments for engineering management roles (Head of Eng, VP Eng, Director of Engineering, etc.).",
+    )
+    parser.add_argument(
+        "--no-extract",
+        action="store_true",
+        help="Skip LLM-based extraction of structured data (faster, but no extracted fields).",
     )
     parser.add_argument(
         "--input",
@@ -370,7 +554,9 @@ def main() -> None:
             )
             args.output = "matches.json"
 
-        matches = search_engineering_management_roles(args.input)
+        matches = search_engineering_management_roles(
+            args.input, extract_with_llm=not args.no_extract
+        )
         write_json(matches, args.output)
         print(f"\nWrote {len(matches)} matches to {args.output}")
     elif args.fetch_comments:
