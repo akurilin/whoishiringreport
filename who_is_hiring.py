@@ -641,7 +641,7 @@ def generate_html_report(input_path: str, output_path: str) -> None:
         row_id = f"row-{idx}"
         table_rows.append(
             f"""
-        <tr id="{row_id}" class="data-row">
+        <tr id="{row_id}" class="data-row" data-expanded="false">
             <td class="company-cell">{company}</td>
             <td class="role-cell">{role}</td>
             <td class="location-cell">{location}</td>
@@ -729,7 +729,7 @@ def generate_html_report(input_path: str, output_path: str) -> None:
         
         .search-filter {{
             display: grid;
-            grid-template-columns: 2fr 1fr 1fr 1fr;
+            grid-template-columns: 2fr 1fr 1fr 1fr auto;
             gap: 15px;
             margin-bottom: 15px;
         }}
@@ -919,6 +919,27 @@ def generate_html_report(input_path: str, output_path: str) -> None:
             color: white;
             display: inline-block;
         }}
+
+        .reset-btn {{
+            background: #f8f9fa;
+            color: #343a40;
+            border: 2px solid #dee2e6;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }}
+
+        .reset-btn:hover {{
+            background: #e9ecef;
+        }}
+
+        .filter-actions {{
+            display: flex;
+            align-items: flex-end;
+            justify-content: flex-end;
+        }}
         
         .link-btn:hover {{
             background: #5a6268;
@@ -965,7 +986,7 @@ def generate_html_report(input_path: str, output_path: str) -> None:
         
         @media (max-width: 1200px) {{
             .search-filter {{
-                grid-template-columns: 1fr 1fr;
+                grid-template-columns: 1fr 1fr 1fr;
             }}
         }}
         
@@ -1012,6 +1033,9 @@ def generate_html_report(input_path: str, output_path: str) -> None:
                 <div class="filter-group">
                     <label for="company-filter">Company</label>
                     <input type="text" id="company-filter" placeholder="Company name..." oninput="filterTable()">
+                </div>
+                <div class="filter-actions">
+                    <button type="button" class="reset-btn" onclick="clearFilters()">Clear filters</button>
                 </div>
             </div>
             
@@ -1067,6 +1091,14 @@ def generate_html_report(input_path: str, output_path: str) -> None:
             allRows = Array.from(rows);
             updateStats();
         }});
+
+        function clearFilters() {{
+            document.getElementById('search').value = '';
+            document.getElementById('remote-filter').value = '';
+            document.getElementById('location-filter').value = '';
+            document.getElementById('company-filter').value = '';
+            filterTable();
+        }}
         
         function filterTable() {{
             const search = document.getElementById('search').value.toLowerCase();
@@ -1084,6 +1116,7 @@ def generate_html_report(input_path: str, output_path: str) -> None:
                 const location = cells[2].textContent.toLowerCase();
                 const remote = cells[3].textContent.trim();
                 const detailRow = document.getElementById(row.id + '-detail');
+                const isExpanded = row.dataset.expanded === 'true';
                 
                 // Check filters
                 const matchesSearch = !search || 
@@ -1096,7 +1129,7 @@ def generate_html_report(input_path: str, output_path: str) -> None:
                 
                 if (matchesSearch && matchesRemote && matchesLocation && matchesCompany) {{
                     row.style.display = '';
-                    if (detailRow) detailRow.style.display = '';
+                    if (detailRow) detailRow.style.display = isExpanded ? '' : 'none';
                     visibleCount++;
                     if (remote === 'Yes') remoteCount++;
                 }} else {{
@@ -1160,9 +1193,13 @@ def generate_html_report(input_path: str, output_path: str) -> None:
         }}
         
         function toggleRow(rowId) {{
+            const row = document.getElementById(rowId);
             const detailRow = document.getElementById(rowId + '-detail');
-            if (detailRow) {{
-                detailRow.style.display = detailRow.style.display === 'none' ? '' : 'none';
+            if (row && detailRow) {{
+                const isExpanded = row.dataset.expanded === 'true';
+                const nextExpanded = !isExpanded;
+                row.dataset.expanded = nextExpanded ? 'true' : 'false';
+                detailRow.style.display = nextExpanded ? '' : 'none';
             }}
         }}
         
