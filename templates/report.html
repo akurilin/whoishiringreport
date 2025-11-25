@@ -14,6 +14,7 @@
         .remote-no { color: #6b7280; }
         .data-row { cursor: pointer; }
         .cell-text { cursor: text; }
+        .detail-content { max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.25s ease; }
     </style>
 </head>
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">
@@ -88,14 +89,16 @@
                     </tr>
                     <tr id="{{ row.row_id }}-detail" class="detail-row bg-slate-50" style="display: none;">
                         <td colspan="10" class="px-6 py-4 border-l-4 border-indigo-500">
-                            <div class="space-y-4">
-                                <div>
-                                    <h4 class="text-indigo-600 font-semibold mb-1">Matched Text:</h4>
-                                    <p class="matched-text inline-block px-3 py-1 rounded bg-slate-200 text-slate-800 font-semibold">{{ row.matched_text | e }}</p>
-                                </div>
-                                <div>
-                                    <h4 class="text-indigo-600 font-semibold mb-2">Full Content:</h4>
-                                    <div class="full-content leading-6 text-slate-900 whitespace-pre-wrap break-words">{{ row.full_content | e | replace('\n', '<br>') | safe }}</div>
+                            <div class="detail-content">
+                                <div class="space-y-4">
+                                    <div>
+                                        <h4 class="text-indigo-600 font-semibold mb-1">Matched Text:</h4>
+                                        <p class="matched-text inline-block px-3 py-1 rounded bg-slate-200 text-slate-800 font-semibold">{{ row.matched_text | e }}</p>
+                                    </div>
+                                    <div>
+                                        <h4 class="text-indigo-600 font-semibold mb-2">Full Content:</h4>
+                                        <div class="full-content leading-6 text-slate-900 whitespace-pre-wrap break-words">{{ row.full_content | e | replace('\n', '<br>') | safe }}</div>
+                                    </div>
                                 </div>
                             </div>
                         </td>
@@ -233,11 +236,55 @@
         function toggleRow(rowId) {
             const row = document.getElementById(rowId);
             const detailRow = document.getElementById(rowId + '-detail');
-            if (row && detailRow) {
-                const isExpanded = row.dataset.expanded === 'true';
+            if (!row || !detailRow) return;
+
+            const content = detailRow.querySelector('.detail-content');
+            const isExpanded = row.dataset.expanded === 'true';
+
+            if (!content) {
+                // Fallback without animation if content container is missing
                 const nextExpanded = !isExpanded;
                 row.dataset.expanded = nextExpanded ? 'true' : 'false';
                 detailRow.style.display = nextExpanded ? '' : 'none';
+                return;
+            }
+
+            if (!isExpanded) {
+                // Expand
+                detailRow.style.display = 'table-row';
+                content.style.maxHeight = '0px';
+                content.style.opacity = '0';
+                requestAnimationFrame(() => {
+                    const fullHeight = content.scrollHeight;
+                    content.style.maxHeight = fullHeight + 'px';
+                    content.style.opacity = '1';
+                });
+
+                const onExpandEnd = (event) => {
+                    if (event.propertyName === 'max-height') {
+                        content.style.maxHeight = 'none';
+                        content.removeEventListener('transitionend', onExpandEnd);
+                    }
+                };
+                content.addEventListener('transitionend', onExpandEnd);
+                row.dataset.expanded = 'true';
+            } else {
+                // Collapse
+                const currentHeight = content.scrollHeight;
+                content.style.maxHeight = currentHeight + 'px';
+                requestAnimationFrame(() => {
+                    content.style.maxHeight = '0px';
+                    content.style.opacity = '0';
+                });
+
+                const onCollapseEnd = (event) => {
+                    if (event.propertyName === 'max-height') {
+                        detailRow.style.display = 'none';
+                        content.removeEventListener('transitionend', onCollapseEnd);
+                    }
+                };
+                content.addEventListener('transitionend', onCollapseEnd);
+                row.dataset.expanded = 'false';
             }
         }
 
