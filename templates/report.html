@@ -25,7 +25,7 @@
         </div>
         
         <div class="bg-slate-50 px-6 py-5 border-b border-slate-200">
-            <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-5 items-end">
+            <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-7 items-end">
                 <div class="flex flex-col">
                     <label for="search" class="text-sm font-semibold text-slate-700 mb-1">Search (Company, Role, Location...)</label>
                     <input type="text" id="search" placeholder="Type to search..." oninput="filterTable()" class="w-full rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
@@ -45,6 +45,14 @@
                 <div class="flex flex-col">
                     <label for="company-filter" class="text-sm font-semibold text-slate-700 mb-1">Company</label>
                     <input type="text" id="company-filter" placeholder="Company name..." oninput="filterTable()" class="w-full rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div class="flex flex-col">
+                    <label for="date-from" class="text-sm font-semibold text-slate-700 mb-1">Date from</label>
+                    <input type="date" id="date-from" oninput="filterTable()" class="w-full rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div class="flex flex-col">
+                    <label for="date-to" class="text-sm font-semibold text-slate-700 mb-1">Date to</label>
+                    <input type="date" id="date-to" oninput="filterTable()" class="w-full rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 </div>
                 <div class="flex items-center justify-end gap-3">
                     <button type="button" class="inline-flex items-center justify-center px-4 py-2 rounded-md border border-slate-300 bg-white text-slate-700 font-semibold shadow-sm hover:bg-slate-100" onclick="clearFilters()">Clear filters</button>
@@ -116,6 +124,7 @@
         let allRows = [];
         let totalCount = 0;
         let currentSort = { column: -1, direction: 'asc' };
+        const storageKey = 'hn-report-filters';
         
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
@@ -123,6 +132,7 @@
             allRows = Array.from(rows);
             totalCount = allRows.length;
             updateVisibleSummary(totalCount);
+            restoreFilters();
 
             const tbody = document.getElementById('table-body');
             if (tbody) {
@@ -144,6 +154,9 @@
             document.getElementById('remote-filter').value = '';
             document.getElementById('location-filter').value = '';
             document.getElementById('company-filter').value = '';
+            document.getElementById('date-from').value = '';
+            document.getElementById('date-to').value = '';
+            localStorage.removeItem(storageKey);
             filterTable();
         }
         
@@ -153,6 +166,8 @@
             const locationFilter = document.getElementById('location-filter').value.toLowerCase();
             const locationTerms = locationFilter.split('||').map(t => t.trim()).filter(Boolean);
             const companyFilter = document.getElementById('company-filter').value.toLowerCase();
+            const dateFrom = document.getElementById('date-from').value;
+            const dateTo = document.getElementById('date-to').value;
             
             let visibleCount = 0;
             
@@ -162,8 +177,13 @@
                 const role = cells[1].textContent.toLowerCase();
                 const location = cells[2].textContent.toLowerCase();
                 const remote = cells[3].textContent.trim();
+                const dateText = cells[8].textContent.trim();
                 const detailRow = document.getElementById(row.id + '-detail');
                 const isExpanded = row.dataset.expanded === 'true';
+
+                const dateValue = Date.parse(dateText);
+                const fromValue = dateFrom ? Date.parse(dateFrom) : null;
+                const toValue = dateTo ? Date.parse(dateTo) : null;
                 
                 // Check filters
                 const matchesSearch = !search || 
@@ -173,8 +193,12 @@
                 const matchesRemote = !remoteFilter || remote === remoteFilter;
                 const matchesLocation = !locationFilter || locationTerms.some(term => location.includes(term));
                 const matchesCompany = !companyFilter || company.includes(companyFilter);
+                const matchesFrom = !fromValue || (!isNaN(dateValue) && dateValue >= fromValue);
+                // Add one day to toValue to make the filter inclusive for users in different TZs
+                const adjustedTo = toValue !== null ? toValue + 24 * 60 * 60 * 1000 : null;
+                const matchesTo = adjustedTo === null || (!isNaN(dateValue) && dateValue < adjustedTo);
                 
-                if (matchesSearch && matchesRemote && matchesLocation && matchesCompany) {
+                if (matchesSearch && matchesRemote && matchesLocation && matchesCompany && matchesFrom && matchesTo) {
                     row.style.display = '';
                     if (detailRow) detailRow.style.display = isExpanded ? '' : 'none';
                     visibleCount++;
@@ -186,6 +210,7 @@
             
             updateVisibleSummary(visibleCount);
             document.getElementById('no-results').style.display = visibleCount === 0 ? 'block' : 'none';
+            persistFilters();
         }
         
         function sortTable(column) {
@@ -311,6 +336,43 @@
                 summary.textContent = `${count} / ${totalCount} visible`;
                 summary.classList.remove('hidden');
             }
+        }
+
+        function persistFilters() {
+            const data = {
+                search: document.getElementById('search').value,
+                remote: document.getElementById('remote-filter').value,
+                location: document.getElementById('location-filter').value,
+                company: document.getElementById('company-filter').value,
+                dateFrom: document.getElementById('date-from').value,
+                dateTo: document.getElementById('date-to').value,
+            };
+            try {
+                localStorage.setItem(storageKey, JSON.stringify(data));
+            } catch (e) {
+                console.warn('Could not persist filters', e);
+            }
+        }
+
+        function restoreFilters() {
+            let data = null;
+            try {
+                data = JSON.parse(localStorage.getItem(storageKey));
+            } catch (e) {
+                console.warn('Could not restore filters', e);
+            }
+            if (!data) {
+                filterTable();
+                return;
+            }
+
+            document.getElementById('search').value = data.search || '';
+            document.getElementById('remote-filter').value = data.remote || '';
+            document.getElementById('location-filter').value = data.location || '';
+            document.getElementById('company-filter').value = data.company || '';
+            document.getElementById('date-from').value = data.dateFrom || '';
+            document.getElementById('date-to').value = data.dateTo || '';
+            filterTable();
         }
     </script>
 </body>
