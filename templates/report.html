@@ -77,7 +77,7 @@
                         <td class="px-4 py-3 text-emerald-600 font-medium">{{ row.cash_comp | e }}</td>
                         <td class="px-4 py-3 text-slate-700">{{ row.equity | e }}</td>
                         <td class="px-4 py-3 text-slate-700">{{ row.commenter | e }}</td>
-                        <td class="px-4 py-3 text-slate-600">{{ row.date | e }}</td>
+                        <td class="px-4 py-3 text-slate-600 whitespace-nowrap">{{ row.date | e }}</td>
                         <td class="px-4 py-3">
                             <div class="flex gap-2">
                                 <button class="expand-btn inline-flex items-center px-3 py-2 rounded-md bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500" onclick="toggleRow('{{ row.row_id }}')">View</button>
@@ -133,6 +133,7 @@
             const search = document.getElementById('search').value.toLowerCase();
             const remoteFilter = document.getElementById('remote-filter').value;
             const locationFilter = document.getElementById('location-filter').value.toLowerCase();
+            const locationTerms = locationFilter.split('||').map(t => t.trim()).filter(Boolean);
             const companyFilter = document.getElementById('company-filter').value.toLowerCase();
             
             let visibleCount = 0;
@@ -152,7 +153,7 @@
                     role.includes(search) || 
                     location.includes(search);
                 const matchesRemote = !remoteFilter || remote === remoteFilter;
-                const matchesLocation = !locationFilter || location.includes(locationFilter);
+                const matchesLocation = !locationFilter || locationTerms.some(term => location.includes(term));
                 const matchesCompany = !companyFilter || company.includes(companyFilter);
                 
                 if (matchesSearch && matchesRemote && matchesLocation && matchesCompany) {
@@ -192,18 +193,14 @@
             
             // Sort rows
             rows.sort((a, b) => {
-                const aText = a.querySelectorAll('td')[column].textContent.trim();
-                const bText = b.querySelectorAll('td')[column].textContent.trim();
-                
-                // Try numeric comparison
-                const aNum = parseFloat(aText.replace(/[^0-9.-]/g, ''));
-                const bNum = parseFloat(bText.replace(/[^0-9.-]/g, ''));
-                if (!isNaN(aNum) && !isNaN(bNum)) {
-                    return currentSort.direction === 'asc' ? aNum - bNum : bNum - aNum;
+                const aVal = getSortValue(a, column);
+                const bVal = getSortValue(b, column);
+
+                if (typeof aVal === 'number' && typeof bVal === 'number') {
+                    return currentSort.direction === 'asc' ? aVal - bVal : bVal - aVal;
                 }
-                
-                // String comparison
-                const comparison = aText.localeCompare(bText, undefined, { numeric: true, sensitivity: 'base' });
+
+                const comparison = String(aVal).localeCompare(String(bVal), undefined, { numeric: true, sensitivity: 'base' });
                 return currentSort.direction === 'asc' ? comparison : -comparison;
             });
             
@@ -227,6 +224,23 @@
                 row.dataset.expanded = nextExpanded ? 'true' : 'false';
                 detailRow.style.display = nextExpanded ? '' : 'none';
             }
+        }
+
+        function getSortValue(row, column) {
+            const cellText = row.querySelectorAll('td')[column].textContent.trim();
+
+            // Date column (ISO-like): sort by timestamp
+            if (column === 8) {
+                const ts = Date.parse(cellText);
+                if (!isNaN(ts)) return ts;
+            }
+
+            // Numeric fallback (e.g., compensation)
+            const num = parseFloat(cellText.replace(/[^0-9.-]/g, ''));
+            if (!isNaN(num)) return num;
+
+            // Default to lowercase string for stable comparisons
+            return cellText.toLowerCase();
         }
         
         function updateVisibleSummary(count) {
