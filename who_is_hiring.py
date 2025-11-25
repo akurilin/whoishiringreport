@@ -3,6 +3,7 @@
 Run with: python who_is_hiring.py --months 24 --output who_is_hiring_posts.csv
 Or fetch comments: python who_is_hiring.py --fetch-comments --input posts.csv --output comments.json
 Or search for engineering management roles: python who_is_hiring.py --search-eng-management --input comments.json --output matches.json
+Or extract from matches: python who_is_hiring.py --extract-from-matches --input matches.json --output matches_with_extraction.json
 """
 
 import argparse
@@ -499,9 +500,88 @@ def search_engineering_management_roles(
     return matches
 
 
+def extract_from_matches(input_path: str, output_path: str) -> None:
+    """Read matches from JSON file and add extracted data to each match.
+
+    Args:
+        input_path: Path to input JSON file with matches
+        output_path: Path to write output JSON file with extracted data
+    """
+    print(f"Loading matches from {input_path}...")
+    with open(input_path, "r", encoding="utf-8") as f:
+        matches = json.load(f)
+
+    print(f"Loaded {len(matches)} matches")
+
+    # Initialize OpenAI client
+    if OpenAI is None:
+        print("Error: OpenAI library not installed. Install with: pip install openai")
+        return
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("Error: OPENAI_API_KEY not found in environment")
+        print("Create a .env file with: OPENAI_API_KEY=your_key_here")
+        return
+
+    client = OpenAI(api_key=api_key)
+    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    print(f"Using model: {model}")
+    print(f"Extracting data for {len(matches)} matches...\n")
+
+    # Extract data for each match
+    for idx, match in enumerate(matches, 1):
+        full_content = match.get("full_content", "")
+        if not full_content:
+            print(f"Match {idx}/{len(matches)}: No full_content, skipping")
+            continue
+
+        print(f"Extracting data for match {idx}/{len(matches)}...")
+        matched_text = match.get("matched_text", None)
+        extracted = extract_job_info_with_llm(
+            full_content, client, matched_text=matched_text
+        )
+        match["extracted"] = extracted
+
+        # Show what was extracted
+        if extracted.get("extraction_error"):
+            print(f"  ⚠️  Error: {extracted['extraction_error']}")
+        else:
+            company = extracted.get("company_name") or "N/A"
+            role = extracted.get("role_name") or "N/A"
+            remote = (
+                "Yes"
+                if extracted.get("is_remote")
+                else "No" if extracted.get("is_remote") is False else "N/A"
+            )
+            comp = extracted.get("cash_compensation") or "N/A"
+            print(
+                f"  ✓ Company: {company}, Role: {role}, Remote: {remote}, Comp: {comp}"
+            )
+
+        # Small delay to avoid rate limits
+        time.sleep(0.1)
+
+    # Write results
+    print(f"\nWriting results to {output_path}...")
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(matches, f, indent=2, ensure_ascii=False)
+
+    # Summary
+    successful = sum(
+        1
+        for m in matches
+        if m.get("extracted") and not m.get("extracted", {}).get("extraction_error")
+    )
+    print(
+        f"\n✅ Complete! Successfully extracted data for {successful}/{len(matches)} matches"
+    )
+    print(f"Results written to {output_path}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch 'Ask HN: Who is hiring?' threads and save them to CSV, or fetch comments from posts, or search for engineering management roles."
+        description="Fetch 'Ask HN: Who is hiring?' threads and save them to CSV, or fetch comments from posts, or search for engineering management roles, or extract structured data from matches."
     )
     parser.add_argument(
         "--fetch-comments",
@@ -514,14 +594,19 @@ def parse_args() -> argparse.Namespace:
         help="Mode: search comments for engineering management roles (Head of Eng, VP Eng, Director of Engineering, etc.).",
     )
     parser.add_argument(
+        "--extract-from-matches",
+        action="store_true",
+        help="Mode: extract structured data from existing matches JSON file using LLM.",
+    )
+    parser.add_argument(
         "--no-extract",
         action="store_true",
-        help="Skip LLM-based extraction of structured data (faster, but no extracted fields).",
+        help="Skip LLM-based extraction of structured data (faster, but no extracted fields). Only used with --search-eng-management.",
     )
     parser.add_argument(
         "--input",
         default="posts.csv",
-        help="Input file (CSV for --fetch-comments mode, JSON for --search-eng-management mode, default: posts.csv).",
+        help="Input file (CSV for --fetch-comments mode, JSON for --search-eng-management and --extract-from-matches modes, default: posts.csv).",
     )
     parser.add_argument(
         "--months",
@@ -532,7 +617,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default="who_is_hiring_posts.csv",
-        help="Path to write output (default: who_is_hiring_posts.csv for posts, comments.json for comments, matches.json for search).",
+        help="Path to write output (default: who_is_hiring_posts.csv for posts, comments.json for comments, matches.json for search, matches_with_extraction.json for extraction).",
     )
     return parser.parse_args()
 
@@ -540,7 +625,22 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    if args.search_eng_management:
+    if args.extract_from_matches:
+        # Mode 4: Extract structured data from existing matches
+        if not args.output.endswith(".json"):
+            # Default to matches_with_extraction.json if not specified
+            if args.output == "who_is_hiring_posts.csv":
+                args.output = "matches_with_extraction.json"
+
+        # Safety check: don't overwrite comments.json
+        if args.output == "comments.json":
+            print(
+                "Error: Cannot write to comments.json (protected file). Using matches_with_extraction.json instead."
+            )
+            args.output = "matches_with_extraction.json"
+
+        extract_from_matches(args.input, args.output)
+    elif args.search_eng_management:
         # Mode 3: Search for engineering management roles
         if not args.output.endswith(".json"):
             # Default to matches.json if not specified
