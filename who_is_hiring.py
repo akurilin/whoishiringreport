@@ -15,6 +15,7 @@ import json
 import os
 import re
 import time
+import webbrowser
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -46,6 +47,7 @@ DEFAULT_COMMENTS_PATH = OUT_DIR / "comments.json"
 DEFAULT_MATCHES_PATH = OUT_DIR / "matches.json"
 DEFAULT_MATCHES_WITH_EXTRACTION_PATH = OUT_DIR / "matches_with_extraction.json"
 DEFAULT_REPORT_PATH = OUT_DIR / "report.html"
+DEFAULT_OPENAI_MODEL = "gpt-4.1"
 
 
 def fetch_who_is_hiring_threads(
@@ -375,8 +377,8 @@ def extract_job_info_with_llm(
         if len(cleaned_content) > 4000:
             cleaned_content = cleaned_content[:4000] + "..."
 
-        # Use model from environment or default to gpt-4.1 (fast, non-thinking model)
-        model = os.getenv("OPENAI_MODEL", "gpt-4.1")
+        # Use default fast model (not configurable via env)
+        model = DEFAULT_OPENAI_MODEL
 
         # Build the user prompt with context about what role to focus on
         role_focus = ""
@@ -521,8 +523,7 @@ def search_engineering_management_roles(
                 extract_with_llm = False
             else:
                 client = OpenAI(api_key=api_key)
-                model = os.getenv("OPENAI_MODEL", "gpt-4.1")
-                print(f"LLM extraction enabled (using {model})")
+                print(f"LLM extraction enabled (using {DEFAULT_OPENAI_MODEL})")
 
     matches = []
 
@@ -624,8 +625,7 @@ def extract_from_matches(input_path: str, output_path: str) -> None:
         return
 
     client = OpenAI(api_key=api_key)
-    model = os.getenv("OPENAI_MODEL", "gpt-4.1")
-    print(f"Using model: {model}")
+    print(f"Using model: {DEFAULT_OPENAI_MODEL}")
     print(f"Extracting data for {len(matches)} matches...\n")
 
     # Extract data for each match
@@ -678,12 +678,15 @@ def extract_from_matches(input_path: str, output_path: str) -> None:
     print(f"Results written to {output_path}")
 
 
-def generate_html_report(input_path: str, output_path: str) -> None:
+def generate_html_report(
+    input_path: str, output_path: str, open_browser: bool = True
+) -> None:
     """Generate a beautiful self-contained HTML report from matches with extraction.
 
     Args:
         input_path: Path to input JSON file with matches and extracted data
         output_path: Path to write output HTML file
+        open_browser: Whether to open the report in the default browser
     """
     print(f"Loading matches from {input_path}...")
     with open(input_path, "r", encoding="utf-8") as f:
@@ -754,6 +757,12 @@ def generate_html_report(input_path: str, output_path: str) -> None:
     print(f"✅ HTML report generated: {output_path}")
     print(f"   Open in your browser to view {len(matches)} matches")
 
+    if open_browser:
+        try:
+            webbrowser.open(output_path.resolve().as_uri())
+        except Exception as exc:  # noqa: BLE001
+            print(f"Warning: could not open browser automatically: {exc}")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -782,6 +791,11 @@ def parse_args() -> argparse.Namespace:
         "--generate-html",
         action="store_true",
         help="Mode: generate a beautiful self-contained HTML report from matches with extraction data.",
+    )
+    parser.add_argument(
+        "--no-open-report",
+        action="store_true",
+        help="Skip automatically opening the HTML report after generation (useful in CI/tests). Only used with --generate-html.",
     )
     parser.add_argument(
         "--no-extract",
@@ -844,7 +858,9 @@ def main() -> None:
             if output_path == "who_is_hiring_posts.csv":
                 output_path = str(DEFAULT_REPORT_PATH)
 
-        generate_html_report(input_path, output_path)
+        generate_html_report(
+            input_path, output_path, open_browser=not args.no_open_report
+        )
     elif args.extract_from_matches:
         # Mode 4: Extract structured data from existing matches
         input_path = input_path or str(DEFAULT_MATCHES_PATH)
