@@ -35,6 +35,8 @@ Script to pull recent Hacker News "Who is hiring?" threads, scrape comments, fin
   `python who_is_hiring.py --fetch-comments --input posts.csv --output out/comments.json`
 - Find engineering-management roles (uses `profiles/engineering_management.yaml`):  
   `python who_is_hiring.py --search-eng-management --input out/comments.json --output out/matches.json`
+- Find UX/design roles (swap in the UX profile):  
+  `python who_is_hiring.py --search-eng-management --profile profiles/ux_designer.yaml --input out/comments.json --output out/ux_matches.json`
 - Extract structured fields with the LLM (title, location, remote, comp, etc.):  
   `python who_is_hiring.py --extract-from-matches --input out/matches.json --output out/matches_with_extraction.json`
   - Add `--no-extract` on the search step to skip LLM usage entirely.

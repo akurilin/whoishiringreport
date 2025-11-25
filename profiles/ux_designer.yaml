@@ -1,0 +1,13 @@
+patterns:
+  - name: "ux_designer"
+    regex: "\\b(ux|user experience)[-\\s]+designer\\b"
+  - name: "ui_ux_designer"
+    regex: "\\b(ui|ux)[-\\s]*\\/[\\s-]*(ux|ui)[-\\s]+designer\\b"
+  - name: "ui_designer"
+    regex: "\\b(user interface|ui)[-\\s]+designer\\b"
+  - name: "product_designer"
+    regex: "\\bproduct[-\\s]+designer\\b"
+  - name: "senior_ux_designer"
+    regex: "\\b(senior|lead|principal|staff)[-\\s]+(ux|user experience|ui|user interface|product)[-\\s]+designer\\b"
+  - name: "interaction_designer"
+    regex: "\\b(interaction|experience|digital)\\s+designer\\b"

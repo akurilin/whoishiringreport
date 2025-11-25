@@ -41,8 +41,8 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
             )
         return result
 
-    # Use a deterministic test post by default (Dec 2024 thread with EM hits early).
-    test_post_id = "42297424"
+    # Use a deterministic test post with early UX/design hits (Nov 2025 thread).
+    test_post_id = "45800465"
 
     # 1) Fetch posts (one only, or a specific ID).
     post_args = ["--output", str(posts_path)]
@@ -68,6 +68,8 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
     run_cmd(
         [
             "--search-eng-management",
+            "--profile",
+            "profiles/ux_designer.yaml",
             "--input",
             str(comments_path),
             "--output",
@@ -96,6 +98,7 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
             str(extracted_path),
             "--output",
             str(report_path),
+            "--no-open-report",
         ]
     )
 
@@ -111,7 +114,7 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
 
     with open(matches_path, encoding="utf-8") as f:
         matches = json.load(f)
-    assert matches, "No matches found; choose a thread with engineering management roles"
+    assert matches, "No matches found; choose a thread with UX/design roles"
     assert len(matches) <= 10, f"Expected <=10 matches, got {len(matches)}"
 
     with open(extracted_path, encoding="utf-8") as f:
