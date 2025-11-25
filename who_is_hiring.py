@@ -48,8 +48,13 @@ DEFAULT_MATCHES_WITH_EXTRACTION_PATH = OUT_DIR / "matches_with_extraction.json"
 DEFAULT_REPORT_PATH = OUT_DIR / "report.html"
 
 
-def fetch_who_is_hiring_threads(since: dt.datetime) -> List[Dict]:
-    """Return threads matching the title pattern since the given UTC datetime."""
+def fetch_who_is_hiring_threads(
+    since: dt.datetime, max_posts: Optional[int] = None
+) -> List[Dict]:
+    """Return threads matching the title pattern since the given UTC datetime.
+
+    max_posts can be used to cap how many recent threads are returned (for tests).
+    """
     since_ts = int(since.timestamp())
     page = 0
     threads: List[Dict] = []
@@ -98,7 +103,12 @@ def fetch_who_is_hiring_threads(since: dt.datetime) -> List[Dict]:
             break
         page += 1
 
-    return sorted(threads, key=lambda t: t["created_at"], reverse=True)
+    threads = sorted(threads, key=lambda t: t["created_at"], reverse=True)
+
+    if max_posts is not None:
+        threads = threads[:max_posts]
+
+    return threads
 
 
 def write_csv(rows: Iterable[Dict], output_path: str) -> None:
@@ -132,9 +142,23 @@ def fetch_hn_item(item_id: int) -> Optional[Dict]:
 
 
 def fetch_comment_and_replies(
-    comment_id: int, post_url: str, comments: List[Dict]
+    comment_id: int,
+    post_url: str,
+    comments: List[Dict],
+    max_comments_per_post: Optional[int] = None,
+    global_counter: Optional[List[int]] = None,
+    max_comments_total: Optional[int] = None,
 ) -> None:
     """Recursively fetch a comment and all its replies."""
+
+    if max_comments_per_post is not None and len(comments) >= max_comments_per_post:
+        return
+    if (
+        max_comments_total is not None
+        and global_counter is not None
+        and global_counter[0] >= max_comments_total
+    ):
+        return
     comment_item = fetch_hn_item(comment_id)
     if not comment_item:
         return
@@ -160,13 +184,39 @@ def fetch_comment_and_replies(
         }
     )
 
+    if global_counter is not None:
+        global_counter[0] += 1
+
+    if max_comments_per_post is not None and len(comments) >= max_comments_per_post:
+        return
+    if (
+        max_comments_total is not None
+        and global_counter is not None
+        and global_counter[0] >= max_comments_total
+    ):
+        return
+
     # Recursively fetch replies
     kids = comment_item.get("kids", [])
     for kid_id in kids:
-        fetch_comment_and_replies(kid_id, post_url, comments)
+        fetch_comment_and_replies(
+            kid_id,
+            post_url,
+            comments,
+            max_comments_per_post=max_comments_per_post,
+            global_counter=global_counter,
+            max_comments_total=max_comments_total,
+        )
 
 
-def fetch_all_comments(post_id: int, post_url: str, comments: List[Dict]) -> None:
+def fetch_all_comments(
+    post_id: int,
+    post_url: str,
+    comments: List[Dict],
+    max_comments_per_post: Optional[int] = None,
+    global_counter: Optional[List[int]] = None,
+    max_comments_total: Optional[int] = None,
+) -> None:
     """Fetch all comments from a post and append to comments list."""
     post_item = fetch_hn_item(post_id)
     if not post_item:
@@ -179,7 +229,22 @@ def fetch_all_comments(post_id: int, post_url: str, comments: List[Dict]) -> Non
 
     # Fetch all comments recursively
     for kid_id in kids:
-        fetch_comment_and_replies(kid_id, post_url, comments)
+        if max_comments_per_post is not None and len(comments) >= max_comments_per_post:
+            break
+        if (
+            max_comments_total is not None
+            and global_counter is not None
+            and global_counter[0] >= max_comments_total
+        ):
+            break
+        fetch_comment_and_replies(
+            kid_id,
+            post_url,
+            comments,
+            max_comments_per_post=max_comments_per_post,
+            global_counter=global_counter,
+            max_comments_total=max_comments_total,
+        )
 
 
 def extract_post_id_from_url(url: str) -> Optional[int]:
@@ -200,10 +265,15 @@ def read_posts_csv(csv_path: str) -> List[Dict]:
     return posts
 
 
-def fetch_comments_from_posts(csv_path: str) -> List[Dict]:
+def fetch_comments_from_posts(
+    csv_path: str,
+    max_comments_per_post: Optional[int] = None,
+    max_comments_total: Optional[int] = None,
+) -> List[Dict]:
     """Fetch all comments from posts listed in CSV file."""
     posts = read_posts_csv(csv_path)
     all_comments = []
+    global_counter = [0]
 
     for i, post in enumerate(posts, 1):
         post_url = post.get("hn_url", "")
@@ -217,11 +287,25 @@ def fetch_comments_from_posts(csv_path: str) -> List[Dict]:
             f"Fetching comments for post {i}/{len(posts)}: {post.get('title', 'Unknown')} (ID: {post_id})"
         )
         post_comments = []
-        fetch_all_comments(post_id, post_url, post_comments)
+        fetch_all_comments(
+            post_id,
+            post_url,
+            post_comments,
+            max_comments_per_post=max_comments_per_post,
+            global_counter=global_counter,
+            max_comments_total=max_comments_total,
+        )
         all_comments.extend(post_comments)
         print(
             f"  Found {len(post_comments)} comments (total so far: {len(all_comments)})"
         )
+
+        if (
+            max_comments_total is not None
+            and global_counter[0] >= max_comments_total
+        ):
+            print("Reached max comment limit; stopping early.")
+            break
 
     return all_comments
 
@@ -291,8 +375,8 @@ def extract_job_info_with_llm(
         if len(cleaned_content) > 4000:
             cleaned_content = cleaned_content[:4000] + "..."
 
-        # Use model from environment or default to gpt-4o (fast, non-thinking model)
-        model = os.getenv("OPENAI_MODEL", "gpt-4o")
+        # Use model from environment or default to gpt-4.1 (fast, non-thinking model)
+        model = os.getenv("OPENAI_MODEL", "gpt-4.1")
 
         # Build the user prompt with context about what role to focus on
         role_focus = ""
@@ -396,6 +480,7 @@ def search_engineering_management_roles(
     comments_path: str,
     extract_with_llm: bool = True,
     profile_path: Optional[str] = None,
+    max_matches: Optional[int] = None,
 ) -> List[Dict]:
     """Search comments for engineering management role postings.
 
@@ -436,17 +521,22 @@ def search_engineering_management_roles(
                 extract_with_llm = False
             else:
                 client = OpenAI(api_key=api_key)
-                model = os.getenv("OPENAI_MODEL", "gpt-4o")
+                model = os.getenv("OPENAI_MODEL", "gpt-4.1")
                 print(f"LLM extraction enabled (using {model})")
 
     matches = []
 
     # Search through each comment
+    stop_search = False
     for idx, comment in enumerate(comments):
         if (idx + 1) % 1000 == 0:
             print(
                 f"  Processed {idx + 1}/{len(comments)} comments, found {len(matches)} matches so far..."
             )
+
+        if max_matches is not None and len(matches) >= max_matches:
+            stop_search = True
+            break
 
         content = comment.get("content", "")
         if not content:
@@ -489,6 +579,13 @@ def search_engineering_management_roles(
                 # Only record first match per pattern per comment to avoid duplicates
                 break
 
+            if max_matches is not None and len(matches) >= max_matches:
+                stop_search = True
+                break
+
+        if stop_search:
+            break
+
     print(f"\nFound {len(matches)} total matches")
     if extract_with_llm:
         successful_extractions = sum(
@@ -527,7 +624,7 @@ def extract_from_matches(input_path: str, output_path: str) -> None:
         return
 
     client = OpenAI(api_key=api_key)
-    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    model = os.getenv("OPENAI_MODEL", "gpt-4.1")
     print(f"Using model: {model}")
     print(f"Extracting data for {len(matches)} matches...\n")
 
@@ -692,6 +789,31 @@ def parse_args() -> argparse.Namespace:
         help="Skip LLM-based extraction of structured data (faster, but no extracted fields). Only used with --search-eng-management.",
     )
     parser.add_argument(
+        "--max-posts",
+        type=int,
+        help="Limit number of posts to fetch (for tests)",
+    )
+    parser.add_argument(
+        "--post-id",
+        type=int,
+        help="Fetch a specific 'Who is hiring?' post ID instead of searching",
+    )
+    parser.add_argument(
+        "--comments-per-post",
+        type=int,
+        help="Limit number of comments fetched per post (for tests)",
+    )
+    parser.add_argument(
+        "--max-comments-total",
+        type=int,
+        help="Limit total number of comments fetched across posts (for tests)",
+    )
+    parser.add_argument(
+        "--max-matches",
+        type=int,
+        help="Limit number of matches processed (for tests)",
+    )
+    parser.add_argument(
         "--input",
         help="Input file (CSV for --fetch-comments mode, JSON for --search-eng-management, --extract-from-matches, and --generate-html modes; defaults are posts.csv, out/comments.json, out/matches.json, and out/matches_with_extraction.json respectively).",
     )
@@ -758,6 +880,7 @@ def main() -> None:
             input_path,
             extract_with_llm=not args.no_extract,
             profile_path=args.profile,
+            max_matches=args.max_matches,
         )
         write_json(matches, output_path)
         print(f"\nWrote {len(matches)} matches to {output_path}")
@@ -769,15 +892,48 @@ def main() -> None:
             if output_path == "who_is_hiring_posts.csv":
                 output_path = str(DEFAULT_COMMENTS_PATH)
 
-        comments = fetch_comments_from_posts(input_path)
+        comments = fetch_comments_from_posts(
+            input_path,
+            max_comments_per_post=args.comments_per_post,
+            max_comments_total=args.max_comments_total,
+        )
         write_json(comments, output_path)
         print(f"\nWrote {len(comments)} comments to {output_path}")
     else:
         # Mode 1: Fetch post URLs (original functionality)
-        since_date = dt.datetime.now(dt.timezone.utc) - dt.timedelta(
-            days=31 * args.months
-        )
-        threads = fetch_who_is_hiring_threads(since_date)
+        if args.post_id:
+            post_item = fetch_hn_item(args.post_id)
+            if not post_item:
+                print(f"Error: Could not fetch post with ID {args.post_id}")
+                return
+
+            title = (post_item.get("title") or "").strip()
+            if not TITLE_PATTERN.match(title):
+                print(
+                    f"Warning: Post ID {args.post_id} title does not match 'Who is hiring?' pattern: {title}"
+                )
+
+            created_at = dt.datetime.fromtimestamp(
+                post_item.get("time", 0), tz=dt.timezone.utc
+            ).isoformat()
+            threads = [
+                {
+                    "id": str(post_item.get("id", "")),
+                    "title": title,
+                    "author": post_item.get("by", ""),
+                    "created_at": created_at,
+                    "hn_url": f"https://news.ycombinator.com/item?id={post_item.get('id', '')}",
+                    "points": post_item.get("score"),
+                    "num_comments": len(post_item.get("kids", []) or []),
+                }
+            ]
+        else:
+            since_date = dt.datetime.now(dt.timezone.utc) - dt.timedelta(
+                days=31 * args.months
+            )
+            threads = fetch_who_is_hiring_threads(
+                since_date, max_posts=args.max_posts
+            )
         output_path = output_path or str(DEFAULT_POSTS_OUTPUT)
         write_csv(threads, output_path)
         print(f"Wrote {len(threads)} threads to {output_path}")
