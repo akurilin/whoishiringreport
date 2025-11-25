@@ -12,6 +12,8 @@
         th.sort-desc::after { content: " ↓"; opacity: 1; }
         .remote-yes { color: #16a34a; font-weight: 600; }
         .remote-no { color: #6b7280; }
+        .data-row { cursor: pointer; }
+        .cell-text { cursor: text; }
     </style>
 </head>
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">
@@ -69,18 +71,17 @@
                 <tbody id="table-body" class="divide-y divide-slate-200">
                     {% for row in rows %}
                     <tr id="{{ row.row_id }}" class="data-row" data-expanded="false">
-                        <td class="px-4 py-3 font-semibold text-slate-900">{{ row.company | e }}</td>
-                        <td class="px-4 py-3 text-slate-800">{{ row.role | e }}</td>
-                        <td class="px-4 py-3 text-slate-600">{{ row.location | e }}</td>
-                        <td class="px-4 py-3 text-center {{ row.remote_class | e }}">{{ row.remote | e }}</td>
-                        <td class="px-4 py-3 text-slate-700">{{ row.employment | e }}</td>
-                        <td class="px-4 py-3 text-emerald-600 font-medium">{{ row.cash_comp | e }}</td>
-                        <td class="px-4 py-3 text-slate-700">{{ row.equity | e }}</td>
-                        <td class="px-4 py-3 text-slate-700">{{ row.commenter | e }}</td>
-                        <td class="px-4 py-3 text-slate-600 whitespace-nowrap">{{ row.date | e }}</td>
+                        <td class="px-4 py-3 font-semibold text-slate-900"><span class="cell-text">{{ row.company | e }}</span></td>
+                        <td class="px-4 py-3 text-slate-800"><span class="cell-text">{{ row.role | e }}</span></td>
+                        <td class="px-4 py-3 text-slate-600"><span class="cell-text">{{ row.location | e }}</span></td>
+                        <td class="px-4 py-3 text-center"><span class="cell-text {{ row.remote_class | e }}">{{ row.remote | e }}</span></td>
+                        <td class="px-4 py-3 text-slate-700"><span class="cell-text">{{ row.employment | e }}</span></td>
+                        <td class="px-4 py-3 text-emerald-600 font-medium"><span class="cell-text">{{ row.cash_comp | e }}</span></td>
+                        <td class="px-4 py-3 text-slate-700"><span class="cell-text">{{ row.equity | e }}</span></td>
+                        <td class="px-4 py-3 text-slate-700"><span class="cell-text">{{ row.commenter | e }}</span></td>
+                        <td class="px-4 py-3 text-slate-600 whitespace-nowrap"><span class="cell-text">{{ row.date | e }}</span></td>
                         <td class="px-4 py-3">
                             <div class="flex gap-2">
-                                <button class="expand-btn inline-flex items-center px-3 py-2 rounded-md bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500" onclick="toggleRow('{{ row.row_id }}')">View</button>
                                 <a href="{{ row.post_url | e }}" target="_blank" class="link-btn inline-flex items-center px-3 py-2 rounded-md bg-slate-600 text-white text-xs font-semibold hover:bg-slate-500">HN</a>
                             </div>
                         </td>
@@ -119,6 +120,20 @@
             allRows = Array.from(rows);
             totalCount = allRows.length;
             updateVisibleSummary(totalCount);
+
+            const tbody = document.getElementById('table-body');
+            if (tbody) {
+                tbody.addEventListener('click', function(event) {
+                    const row = event.target.closest('.data-row');
+                    if (!row) return;
+
+                    const target = event.target;
+                    if (target.closest('button, a, input, textarea, select, label')) return;
+                    if (target.closest('.cell-text')) return;
+
+                    toggleRow(row.id);
+                });
+            }
         });
 
         function clearFilters() {
