@@ -1,10 +1,10 @@
 """Fetch recent 'Ask HN: Who is hiring?' threads and save them to CSV.
 
 Run with: python who_is_hiring.py --months 24 --output who_is_hiring_posts.csv
-Or fetch comments: python who_is_hiring.py --fetch-comments --input posts.csv --output comments.json
-Or search for engineering management roles: python who_is_hiring.py --search-eng-management --input comments.json --output matches.json
-Or extract from matches: python who_is_hiring.py --extract-from-matches --input matches.json --output matches_with_extraction.json
-Or generate HTML report: python who_is_hiring.py --generate-html --input matches_with_extraction.json --output out/report.html
+Or fetch comments: python who_is_hiring.py --fetch-comments --input posts.csv --output out/comments.json
+Or search for engineering management roles: python who_is_hiring.py --search-eng-management --input out/comments.json --output out/matches.json
+Or extract from matches: python who_is_hiring.py --extract-from-matches --input out/matches.json --output out/matches_with_extraction.json
+Or generate HTML report: python who_is_hiring.py --generate-html --input out/matches_with_extraction.json --output out/report.html
 """
 
 import argparse
@@ -14,8 +14,8 @@ import html
 import json
 import os
 import re
-from pathlib import Path
 import time
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import requests
@@ -37,7 +37,15 @@ HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
 TITLE_PATTERN = re.compile(r"^ask hn: who is hiring\?\s*\(.*\)", re.IGNORECASE)
 # Extract post ID from HN URL
 ID_FROM_URL_PATTERN = re.compile(r"id=(\d+)")
-DEFAULT_PROFILE_PATH = Path(__file__).parent / "profiles" / "engineering_management.yaml"
+BASE_DIR = Path(__file__).parent
+OUT_DIR = BASE_DIR / "out"
+DEFAULT_PROFILE_PATH = BASE_DIR / "profiles" / "engineering_management.yaml"
+DEFAULT_POSTS_CSV = BASE_DIR / "posts.csv"
+DEFAULT_POSTS_OUTPUT = BASE_DIR / "who_is_hiring_posts.csv"
+DEFAULT_COMMENTS_PATH = OUT_DIR / "comments.json"
+DEFAULT_MATCHES_PATH = OUT_DIR / "matches.json"
+DEFAULT_MATCHES_WITH_EXTRACTION_PATH = OUT_DIR / "matches_with_extraction.json"
+DEFAULT_REPORT_PATH = OUT_DIR / "report.html"
 
 
 def fetch_who_is_hiring_threads(since: dt.datetime) -> List[Dict]:
@@ -103,6 +111,7 @@ def write_csv(rows: Iterable[Dict], output_path: str) -> None:
         "points",
         "num_comments",
     ]
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -219,6 +228,7 @@ def fetch_comments_from_posts(csv_path: str) -> List[Dict]:
 
 def write_json(data: List[Dict], output_path: str) -> None:
     """Write data to JSON file."""
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as jsonfile:
         json.dump(data, jsonfile, indent=2, ensure_ascii=False)
 
@@ -683,8 +693,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--input",
-        default="posts.csv",
-        help="Input file (CSV for --fetch-comments mode, JSON for --search-eng-management, --extract-from-matches, and --generate-html modes, default: posts.csv).",
+        help="Input file (CSV for --fetch-comments mode, JSON for --search-eng-management, --extract-from-matches, and --generate-html modes; defaults are posts.csv, out/comments.json, out/matches.json, and out/matches_with_extraction.json respectively).",
     )
     parser.add_argument(
         "--months",
@@ -695,76 +704,83 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default="who_is_hiring_posts.csv",
-        help="Path to write output (default: who_is_hiring_posts.csv for posts, comments.json for comments, matches.json for search, matches_with_extraction.json for extraction, out/report.html for HTML).",
+        help="Path to write output (default: who_is_hiring_posts.csv for posts, out/comments.json for comments, out/matches.json for search, out/matches_with_extraction.json for extraction, out/report.html for HTML).",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    input_path = args.input
+    output_path = args.output
 
     if args.generate_html:
         # Mode 5: Generate HTML report
-        if not args.output.endswith(".html"):
+        input_path = input_path or str(DEFAULT_MATCHES_WITH_EXTRACTION_PATH)
+        if not output_path.endswith(".html"):
             # Default to out/report.html if not specified
-            if args.output == "who_is_hiring_posts.csv":
-                args.output = os.path.join("out", "report.html")
+            if output_path == "who_is_hiring_posts.csv":
+                output_path = str(DEFAULT_REPORT_PATH)
 
-        generate_html_report(args.input, args.output)
+        generate_html_report(input_path, output_path)
     elif args.extract_from_matches:
         # Mode 4: Extract structured data from existing matches
-        if not args.output.endswith(".json"):
+        input_path = input_path or str(DEFAULT_MATCHES_PATH)
+        if not output_path.endswith(".json"):
             # Default to matches_with_extraction.json if not specified
-            if args.output == "who_is_hiring_posts.csv":
-                args.output = "matches_with_extraction.json"
+            if output_path == "who_is_hiring_posts.csv":
+                output_path = str(DEFAULT_MATCHES_WITH_EXTRACTION_PATH)
 
         # Safety check: don't overwrite comments.json
-        if args.output == "comments.json":
+        if output_path == "comments.json":
             print(
                 "Error: Cannot write to comments.json (protected file). Using matches_with_extraction.json instead."
             )
-            args.output = "matches_with_extraction.json"
+            output_path = str(DEFAULT_MATCHES_WITH_EXTRACTION_PATH)
 
-        extract_from_matches(args.input, args.output)
+        extract_from_matches(input_path, output_path)
     elif args.search_eng_management:
         # Mode 3: Search for engineering management roles
-        if not args.output.endswith(".json"):
+        input_path = input_path or str(DEFAULT_COMMENTS_PATH)
+        if not output_path.endswith(".json"):
             # Default to matches.json if not specified
-            if args.output == "who_is_hiring_posts.csv":
-                args.output = "matches.json"
+            if output_path == "who_is_hiring_posts.csv":
+                output_path = str(DEFAULT_MATCHES_PATH)
 
         # Safety check: don't overwrite comments.json
-        if args.output == "comments.json":
+        if output_path == "comments.json":
             print(
                 "Error: Cannot write to comments.json (protected file). Using matches.json instead."
             )
-            args.output = "matches.json"
+            output_path = str(DEFAULT_MATCHES_PATH)
 
         matches = search_engineering_management_roles(
-            args.input,
+            input_path,
             extract_with_llm=not args.no_extract,
             profile_path=args.profile,
         )
-        write_json(matches, args.output)
-        print(f"\nWrote {len(matches)} matches to {args.output}")
+        write_json(matches, output_path)
+        print(f"\nWrote {len(matches)} matches to {output_path}")
     elif args.fetch_comments:
         # Mode 2: Fetch comments from posts in CSV
-        if not args.output.endswith(".json"):
+        input_path = input_path or str(DEFAULT_POSTS_CSV)
+        if not output_path.endswith(".json"):
             # Default to .json if not specified
-            if args.output == "who_is_hiring_posts.csv":
-                args.output = "comments.json"
+            if output_path == "who_is_hiring_posts.csv":
+                output_path = str(DEFAULT_COMMENTS_PATH)
 
-        comments = fetch_comments_from_posts(args.input)
-        write_json(comments, args.output)
-        print(f"\nWrote {len(comments)} comments to {args.output}")
+        comments = fetch_comments_from_posts(input_path)
+        write_json(comments, output_path)
+        print(f"\nWrote {len(comments)} comments to {output_path}")
     else:
         # Mode 1: Fetch post URLs (original functionality)
         since_date = dt.datetime.now(dt.timezone.utc) - dt.timedelta(
             days=31 * args.months
         )
         threads = fetch_who_is_hiring_threads(since_date)
-        write_csv(threads, args.output)
-        print(f"Wrote {len(threads)} threads to {args.output}")
+        output_path = output_path or str(DEFAULT_POSTS_OUTPUT)
+        write_csv(threads, output_path)
+        print(f"Wrote {len(threads)} threads to {output_path}")
 
 
 if __name__ == "__main__":
