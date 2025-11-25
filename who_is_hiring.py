@@ -4,6 +4,7 @@ Run with: python who_is_hiring.py --months 24 --output who_is_hiring_posts.csv
 Or fetch comments: python who_is_hiring.py --fetch-comments --input posts.csv --output comments.json
 Or search for engineering management roles: python who_is_hiring.py --search-eng-management --input comments.json --output matches.json
 Or extract from matches: python who_is_hiring.py --extract-from-matches --input matches.json --output matches_with_extraction.json
+Or generate HTML report: python who_is_hiring.py --generate-html --input matches_with_extraction.json --output report.html
 """
 
 import argparse
@@ -579,9 +580,613 @@ def extract_from_matches(input_path: str, output_path: str) -> None:
     print(f"Results written to {output_path}")
 
 
+def generate_html_report(input_path: str, output_path: str) -> None:
+    """Generate a beautiful self-contained HTML report from matches with extraction.
+
+    Args:
+        input_path: Path to input JSON file with matches and extracted data
+        output_path: Path to write output HTML file
+    """
+    print(f"Loading matches from {input_path}...")
+    with open(input_path, "r", encoding="utf-8") as f:
+        matches = json.load(f)
+
+    print(f"Loaded {len(matches)} matches")
+    print(f"Generating HTML report...")
+
+    # Escape HTML entities for safe display
+    def escape_html(text):
+        if text is None:
+            return ""
+        return html.escape(str(text))
+
+    # Format date for display
+    def format_date(date_str):
+        if not date_str:
+            return ""
+        try:
+            dt_obj = dt.datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            return dt_obj.strftime("%Y-%m-%d")
+        except:
+            return date_str
+
+    # Generate table rows
+    table_rows = []
+    for idx, match in enumerate(matches):
+        extracted = match.get("extracted", {})
+        company = escape_html(extracted.get("company_name") or "")
+        role = escape_html(extracted.get("role_name") or "")
+        location = escape_html(extracted.get("location") or "")
+        is_remote_val = extracted.get("is_remote")
+        remote = "Yes" if is_remote_val else "No" if is_remote_val is False else "—"
+        remote_class = (
+            "remote-yes"
+            if is_remote_val
+            else "remote-no" if is_remote_val is False else ""
+        )
+        employment = escape_html(extracted.get("employment_type") or "")
+        cash_comp = escape_html(extracted.get("cash_compensation") or "")
+        equity = (
+            "Yes"
+            if extracted.get("equity_compensation")
+            else "No" if extracted.get("equity_compensation") is False else "—"
+        )
+        commenter = escape_html(match.get("commenter", ""))
+        date = format_date(match.get("date", ""))
+        post_url = escape_html(match.get("post_url", ""))
+        full_content = escape_html(match.get("full_content", ""))
+        matched_text = escape_html(match.get("matched_text", ""))
+
+        # Create expandable row with full content
+        row_id = f"row-{idx}"
+        table_rows.append(
+            f"""
+        <tr id="{row_id}" class="data-row">
+            <td class="company-cell">{company}</td>
+            <td class="role-cell">{role}</td>
+            <td class="location-cell">{location}</td>
+            <td class="remote-cell {remote_class}">{remote}</td>
+            <td class="employment-cell">{employment}</td>
+            <td class="cash-comp-cell">{cash_comp}</td>
+            <td class="equity-cell">{equity}</td>
+            <td class="commenter-cell">{commenter}</td>
+            <td class="date-cell">{date}</td>
+            <td class="actions-cell">
+                <button class="expand-btn" onclick="toggleRow('{row_id}')">View</button>
+                <a href="{post_url}" target="_blank" class="link-btn">HN</a>
+            </td>
+        </tr>
+        <tr id="{row_id}-detail" class="detail-row" style="display: none;">
+            <td colspan="10" class="detail-content">
+                <div class="detail-section">
+                    <h4>Matched Text:</h4>
+                    <p class="matched-text">{matched_text}</p>
+                </div>
+                <div class="detail-section">
+                    <h4>Full Content:</h4>
+                    <div class="full-content">{full_content.replace(chr(10), '<br>')}</div>
+                </div>
+            </td>
+        </tr>
+        """
+        )
+
+    rows_html = "\n".join(table_rows)
+
+    # Generate HTML
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engineering Management Job Matches</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }}
+        
+        .container {{
+            max-width: 1600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }}
+        
+        .header {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }}
+        
+        .header h1 {{
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }}
+        
+        .header p {{
+            font-size: 1.1em;
+            opacity: 0.9;
+        }}
+        
+        .controls {{
+            padding: 25px;
+            background: #f8f9fa;
+            border-bottom: 2px solid #e9ecef;
+        }}
+        
+        .search-filter {{
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }}
+        
+        .filter-group {{
+            display: flex;
+            flex-direction: column;
+        }}
+        
+        .filter-group label {{
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #495057;
+            font-size: 0.9em;
+        }}
+        
+        .filter-group input,
+        .filter-group select {{
+            padding: 10px;
+            border: 2px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }}
+        
+        .filter-group input:focus,
+        .filter-group select:focus {{
+            outline: none;
+            border-color: #667eea;
+        }}
+        
+        .stats {{
+            display: flex;
+            gap: 20px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #dee2e6;
+        }}
+        
+        .stat-item {{
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #dee2e6;
+        }}
+        
+        .stat-value {{
+            font-size: 1.8em;
+            font-weight: 700;
+            color: #667eea;
+        }}
+        
+        .stat-label {{
+            font-size: 0.9em;
+            color: #6c757d;
+            margin-top: 5px;
+        }}
+        
+        .table-wrapper {{
+            overflow-x: auto;
+            max-height: calc(100vh - 400px);
+            overflow-y: auto;
+        }}
+        
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95em;
+        }}
+        
+        thead {{
+            position: sticky;
+            top: 0;
+            background: #667eea;
+            color: white;
+            z-index: 10;
+        }}
+        
+        th {{
+            padding: 15px 12px;
+            text-align: left;
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            transition: background-color 0.2s;
+        }}
+        
+        th:hover {{
+            background: #5568d3;
+        }}
+        
+        th.sortable::after {{
+            content: " ↕";
+            opacity: 0.5;
+            font-size: 0.8em;
+        }}
+        
+        th.sort-asc::after {{
+            content: " ↑";
+            opacity: 1;
+        }}
+        
+        th.sort-desc::after {{
+            content: " ↓";
+            opacity: 1;
+        }}
+        
+        tbody tr {{
+            border-bottom: 1px solid #e9ecef;
+            transition: background-color 0.2s;
+        }}
+        
+        tbody tr:hover {{
+            background: #f8f9fa;
+        }}
+        
+        tbody tr.detail-row {{
+            background: #f8f9fa;
+        }}
+        
+        td {{
+            padding: 12px;
+            vertical-align: top;
+        }}
+        
+        .company-cell {{
+            font-weight: 600;
+            color: #212529;
+        }}
+        
+        .role-cell {{
+            color: #495057;
+        }}
+        
+        .location-cell {{
+            color: #6c757d;
+        }}
+        
+        .remote-cell {{
+            text-align: center;
+        }}
+        
+        .remote-yes {{
+            color: #28a745;
+            font-weight: 600;
+        }}
+        
+        .remote-no {{
+            color: #6c757d;
+        }}
+        
+        .cash-comp-cell {{
+            color: #28a745;
+            font-weight: 500;
+        }}
+        
+        .actions-cell {{
+            display: flex;
+            gap: 8px;
+        }}
+        
+        .expand-btn,
+        .link-btn {{
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85em;
+            text-decoration: none;
+            transition: all 0.2s;
+        }}
+        
+        .expand-btn {{
+            background: #667eea;
+            color: white;
+        }}
+        
+        .expand-btn:hover {{
+            background: #5568d3;
+        }}
+        
+        .link-btn {{
+            background: #6c757d;
+            color: white;
+            display: inline-block;
+        }}
+        
+        .link-btn:hover {{
+            background: #5a6268;
+        }}
+        
+        .detail-content {{
+            padding: 20px;
+            background: white;
+            border-left: 4px solid #667eea;
+        }}
+        
+        .detail-section {{
+            margin-bottom: 20px;
+        }}
+        
+        .detail-section h4 {{
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }}
+        
+        .matched-text {{
+            font-weight: 600;
+            color: #495057;
+            padding: 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            display: inline-block;
+        }}
+        
+        .full-content {{
+            line-height: 1.6;
+            color: #212529;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }}
+        
+        .no-results {{
+            text-align: center;
+            padding: 60px 20px;
+            color: #6c757d;
+            font-size: 1.2em;
+        }}
+        
+        @media (max-width: 1200px) {{
+            .search-filter {{
+                grid-template-columns: 1fr 1fr;
+            }}
+        }}
+        
+        @media (max-width: 768px) {{
+            .search-filter {{
+                grid-template-columns: 1fr;
+            }}
+            
+            .table-wrapper {{
+                font-size: 0.85em;
+            }}
+            
+            th, td {{
+                padding: 8px 6px;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 Engineering Management Job Matches</h1>
+            <p>Found {len(matches)} matches from Hacker News "Who is hiring?" threads</p>
+        </div>
+        
+        <div class="controls">
+            <div class="search-filter">
+                <div class="filter-group">
+                    <label for="search">Search (Company, Role, Location...)</label>
+                    <input type="text" id="search" placeholder="Type to search..." oninput="filterTable()">
+                </div>
+                <div class="filter-group">
+                    <label for="remote-filter">Remote</label>
+                    <select id="remote-filter" onchange="filterTable()">
+                        <option value="">All</option>
+                        <option value="Yes">Yes</option>
+                        <option value="No">No</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="location-filter">Location</label>
+                    <input type="text" id="location-filter" placeholder="e.g., San Francisco" oninput="filterTable()">
+                </div>
+                <div class="filter-group">
+                    <label for="company-filter">Company</label>
+                    <input type="text" id="company-filter" placeholder="Company name..." oninput="filterTable()">
+                </div>
+            </div>
+            
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-value" id="total-count">{len(matches)}</div>
+                    <div class="stat-label">Total Matches</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="visible-count">{len(matches)}</div>
+                    <div class="stat-label">Visible</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="remote-count">—</div>
+                    <div class="stat-label">Remote Available</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="table-wrapper">
+            <table id="matches-table">
+                <thead>
+                    <tr>
+                        <th class="sortable" onclick="sortTable(0)">Company</th>
+                        <th class="sortable" onclick="sortTable(1)">Role</th>
+                        <th class="sortable" onclick="sortTable(2)">Location</th>
+                        <th class="sortable" onclick="sortTable(3)">Remote</th>
+                        <th class="sortable" onclick="sortTable(4)">Type</th>
+                        <th class="sortable" onclick="sortTable(5)">Compensation</th>
+                        <th class="sortable" onclick="sortTable(6)">Equity</th>
+                        <th class="sortable" onclick="sortTable(7)">Commenter</th>
+                        <th class="sortable" onclick="sortTable(8)">Date</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body">
+                    {rows_html}
+                </tbody>
+            </table>
+            <div id="no-results" class="no-results" style="display: none;">
+                No matches found. Try adjusting your filters.
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let allRows = [];
+        let currentSort = {{ column: -1, direction: 'asc' }};
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {{
+            const rows = document.querySelectorAll('.data-row');
+            allRows = Array.from(rows);
+            updateStats();
+        }});
+        
+        function filterTable() {{
+            const search = document.getElementById('search').value.toLowerCase();
+            const remoteFilter = document.getElementById('remote-filter').value;
+            const locationFilter = document.getElementById('location-filter').value.toLowerCase();
+            const companyFilter = document.getElementById('company-filter').value.toLowerCase();
+            
+            let visibleCount = 0;
+            let remoteCount = 0;
+            
+            allRows.forEach((row, idx) => {{
+                const cells = row.querySelectorAll('td');
+                const company = cells[0].textContent.toLowerCase();
+                const role = cells[1].textContent.toLowerCase();
+                const location = cells[2].textContent.toLowerCase();
+                const remote = cells[3].textContent.trim();
+                const detailRow = document.getElementById(row.id + '-detail');
+                
+                // Check filters
+                const matchesSearch = !search || 
+                    company.includes(search) || 
+                    role.includes(search) || 
+                    location.includes(search);
+                const matchesRemote = !remoteFilter || remote === remoteFilter;
+                const matchesLocation = !locationFilter || location.includes(locationFilter);
+                const matchesCompany = !companyFilter || company.includes(companyFilter);
+                
+                if (matchesSearch && matchesRemote && matchesLocation && matchesCompany) {{
+                    row.style.display = '';
+                    if (detailRow) detailRow.style.display = '';
+                    visibleCount++;
+                    if (remote === 'Yes') remoteCount++;
+                }} else {{
+                    row.style.display = 'none';
+                    if (detailRow) detailRow.style.display = 'none';
+                }}
+            }});
+            
+            document.getElementById('visible-count').textContent = visibleCount;
+            document.getElementById('remote-count').textContent = remoteCount || '—';
+            document.getElementById('no-results').style.display = visibleCount === 0 ? 'block' : 'none';
+        }}
+        
+        function sortTable(column) {{
+            const tbody = document.getElementById('table-body');
+            const rows = Array.from(tbody.querySelectorAll('.data-row'));
+            const headers = document.querySelectorAll('th');
+            
+            // Reset header classes
+            headers.forEach(h => {{
+                h.classList.remove('sort-asc', 'sort-desc');
+            }});
+            
+            // Determine sort direction
+            if (currentSort.column === column) {{
+                currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+            }} else {{
+                currentSort.column = column;
+                currentSort.direction = 'asc';
+            }}
+            
+            // Update header
+            headers[column].classList.add(currentSort.direction === 'asc' ? 'sort-asc' : 'sort-desc');
+            
+            // Sort rows
+            rows.sort((a, b) => {{
+                const aText = a.querySelectorAll('td')[column].textContent.trim();
+                const bText = b.querySelectorAll('td')[column].textContent.trim();
+                
+                // Try numeric comparison
+                const aNum = parseFloat(aText.replace(/[^0-9.-]/g, ''));
+                const bNum = parseFloat(bText.replace(/[^0-9.-]/g, ''));
+                if (!isNaN(aNum) && !isNaN(bNum)) {{
+                    return currentSort.direction === 'asc' ? aNum - bNum : bNum - aNum;
+                }}
+                
+                // String comparison
+                const comparison = aText.localeCompare(bText, undefined, {{ numeric: true, sensitivity: 'base' }});
+                return currentSort.direction === 'asc' ? comparison : -comparison;
+            }});
+            
+            // Reorder rows in DOM (including detail rows)
+            rows.forEach((row, idx) => {{
+                const detailRow = document.getElementById(row.id + '-detail');
+                tbody.appendChild(row);
+                if (detailRow) tbody.appendChild(detailRow);
+            }});
+            
+            // Update allRows array
+            allRows = rows;
+        }}
+        
+        function toggleRow(rowId) {{
+            const detailRow = document.getElementById(rowId + '-detail');
+            if (detailRow) {{
+                detailRow.style.display = detailRow.style.display === 'none' ? '' : 'none';
+            }}
+        }}
+        
+        function updateStats() {{
+            const remoteCount = Array.from(allRows).filter(row => {{
+                const cells = row.querySelectorAll('td');
+                return cells[3].textContent.trim() === 'Yes';
+            }}).length;
+            document.getElementById('remote-count').textContent = remoteCount || '—';
+        }}
+    </script>
+</body>
+</html>"""
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html_content)
+
+    print(f"✅ HTML report generated: {output_path}")
+    print(f"   Open in your browser to view {len(matches)} matches")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch 'Ask HN: Who is hiring?' threads and save them to CSV, or fetch comments from posts, or search for engineering management roles, or extract structured data from matches."
+        description="Fetch 'Ask HN: Who is hiring?' threads and save them to CSV, or fetch comments from posts, or search for engineering management roles, or extract structured data from matches, or generate an HTML report."
     )
     parser.add_argument(
         "--fetch-comments",
@@ -599,6 +1204,11 @@ def parse_args() -> argparse.Namespace:
         help="Mode: extract structured data from existing matches JSON file using LLM.",
     )
     parser.add_argument(
+        "--generate-html",
+        action="store_true",
+        help="Mode: generate a beautiful self-contained HTML report from matches with extraction data.",
+    )
+    parser.add_argument(
         "--no-extract",
         action="store_true",
         help="Skip LLM-based extraction of structured data (faster, but no extracted fields). Only used with --search-eng-management.",
@@ -606,7 +1216,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input",
         default="posts.csv",
-        help="Input file (CSV for --fetch-comments mode, JSON for --search-eng-management and --extract-from-matches modes, default: posts.csv).",
+        help="Input file (CSV for --fetch-comments mode, JSON for --search-eng-management, --extract-from-matches, and --generate-html modes, default: posts.csv).",
     )
     parser.add_argument(
         "--months",
@@ -617,7 +1227,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default="who_is_hiring_posts.csv",
-        help="Path to write output (default: who_is_hiring_posts.csv for posts, comments.json for comments, matches.json for search, matches_with_extraction.json for extraction).",
+        help="Path to write output (default: who_is_hiring_posts.csv for posts, comments.json for comments, matches.json for search, matches_with_extraction.json for extraction, report.html for HTML).",
     )
     return parser.parse_args()
 
@@ -625,7 +1235,15 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    if args.extract_from_matches:
+    if args.generate_html:
+        # Mode 5: Generate HTML report
+        if not args.output.endswith(".html"):
+            # Default to report.html if not specified
+            if args.output == "who_is_hiring_posts.csv":
+                args.output = "report.html"
+
+        generate_html_report(args.input, args.output)
+    elif args.extract_from_matches:
         # Mode 4: Extract structured data from existing matches
         if not args.output.endswith(".json"):
             # Default to matches_with_extraction.json if not specified
