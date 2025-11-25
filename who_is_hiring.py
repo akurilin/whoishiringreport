@@ -696,7 +696,7 @@ def generate_html_report(
     print(f"Generating HTML report...")
 
     # Format date for display
-    def format_date(date_str):
+    def format_date(date_str: Optional[str]) -> str:
         if not date_str:
             return ""
         try:
