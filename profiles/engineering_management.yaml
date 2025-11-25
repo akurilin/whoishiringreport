@@ -1,0 +1,6 @@
+patterns:
+  - "\\b(head|director|dir|der|vp|vpe|v\\.??p\\.??|vice\\s+president|manager|mgr)\\s+of\\s+(eng|eng\\'?g|engr|engineering|software\\s+engineering|software\\s+development|dev|development|tech|technology|programming)\\b"
+  - "\\b(eng|eng\\'?g|engr|engineering|software\\s+engineering|software\\s+development|dev|development|tech|technology|programming)\\s+(head|director|dir|der|vp|vpe|v\\.??p\\.??|vice\\s+president|manager|mgr)\\b"
+  - "\\b(head|director|dir|der|vp|vpe|v\\.??p\\.??|vice\\s+president|manager|mgr),\\s*(eng|eng\\'?g|engr|engineering|software\\s+engineering|software\\s+development|dev|development|tech|technology)\\b"
+  - "\\b(head|dir|der|vp|vpe)\\s+(of\\s+)?(eng|eng\\'?g|engr)\\b"
+  - "\\b(senior|principal)\\s+(engineering|software|dev|development)\\s+(manager|director|head|vp|vpe)\\b"

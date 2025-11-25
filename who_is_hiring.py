@@ -20,6 +20,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import requests
 from dotenv import load_dotenv
+import yaml
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 # Load environment variables from .env file
@@ -36,6 +37,7 @@ HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
 TITLE_PATTERN = re.compile(r"^ask hn: who is hiring\?\s*\(.*\)", re.IGNORECASE)
 # Extract post ID from HN URL
 ID_FROM_URL_PATTERN = re.compile(r"id=(\d+)")
+DEFAULT_PROFILE_PATH = Path(__file__).parent / "profiles" / "engineering_management.yaml"
 
 
 def fetch_who_is_hiring_threads(since: dt.datetime) -> List[Dict]:
@@ -346,65 +348,51 @@ Return JSON only, no markdown formatting, no explanations."""
         }
 
 
-def compile_engineering_management_patterns() -> List[Tuple[re.Pattern, str]]:
-    """Compile regex patterns for matching engineering management roles.
+def compile_patterns_from_profile(profile_path: Path) -> List[Tuple[re.Pattern, str]]:
+    """Compile regex patterns for role search from a YAML profile."""
+    if not profile_path.exists():
+        raise FileNotFoundError(f"Profile not found: {profile_path}")
 
-    Returns a list of (pattern, pattern_name) tuples.
-    """
+    with open(profile_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+
     patterns = []
+    for idx, entry in enumerate(data.get("patterns", []), 1):
+        regex = None
+        pattern_name = None
 
-    # Pattern Group A: [Title] of [Engineering]
-    # e.g., "Head of Engineering", "VP of Software Development"
-    pattern_a = re.compile(
-        r"\b(head|director|dir|der|vp|vpe|v\.?p\.?|vice\s+president|manager|mgr)\s+of\s+(eng|eng\'?g|engr|engineering|software\s+engineering|software\s+development|dev|development|tech|technology|programming)\b",
-        re.IGNORECASE,
-    )
-    patterns.append((pattern_a, "title_of_engineering"))
+        if isinstance(entry, str):
+            regex = entry
+        elif isinstance(entry, dict):
+            regex = entry.get("regex")
+            pattern_name = entry.get("name")
+        else:
+            continue
 
-    # Pattern Group B: [Engineering] [Title]
-    # e.g., "Engineering Director", "Software Engineering Manager"
-    # Note: Excludes "lead|leader" to avoid IC roles like "Engineering Lead"
-    pattern_b = re.compile(
-        r"\b(eng|eng\'?g|engr|engineering|software\s+engineering|software\s+development|dev|development|tech|technology|programming)\s+(head|director|dir|der|vp|vpe|v\.?p\.?|vice\s+president|manager|mgr)\b",
-        re.IGNORECASE,
-    )
-    patterns.append((pattern_b, "engineering_title"))
+        if not regex:
+            continue
 
-    # Pattern Group C: [Title], [Engineering]
-    # e.g., "Director, Engineering"
-    pattern_c = re.compile(
-        r"\b(head|director|dir|der|vp|vpe|v\.?p\.?|vice\s+president|manager|mgr),\s*(eng|eng\'?g|engr|engineering|software\s+engineering|software\s+development|dev|development|tech|technology)\b",
-        re.IGNORECASE,
-    )
-    patterns.append((pattern_c, "title_comma_engineering"))
-
-    # Pattern Group D: Abbreviated forms
-    # e.g., "VP Eng", "Dir of ENG", "DER"
-    pattern_d = re.compile(
-        r"\b(head|dir|der|vp|vpe)\s+(of\s+)?(eng|eng\'?g|engr)\b", re.IGNORECASE
-    )
-    patterns.append((pattern_d, "abbreviated_form"))
-
-    # Pattern Group E: Senior/Principal with management
-    # e.g., "Senior Engineering Manager", "Principal Software Director"
-    # Note: Excludes "lead" to avoid IC roles like "Senior Engineering Lead"
-    pattern_e = re.compile(
-        r"\b(senior|principal)\s+(engineering|software|dev|development)\s+(manager|director|head|vp|vpe)\b",
-        re.IGNORECASE,
-    )
-    patterns.append((pattern_e, "senior_principal_management"))
+        try:
+            compiled = re.compile(regex, re.IGNORECASE)
+            patterns.append((compiled, pattern_name or f"pattern_{idx}"))
+        except re.error as e:
+            display_name = pattern_name or f"pattern_{idx}"
+            print(f"Skipping pattern '{display_name}' due to regex error: {e}")
 
     return patterns
 
 
 def search_engineering_management_roles(
-    comments_path: str, extract_with_llm: bool = True
+    comments_path: str,
+    extract_with_llm: bool = True,
+    profile_path: Optional[str] = None,
 ) -> List[Dict]:
     """Search comments for engineering management role postings.
 
     Args:
         comments_path: Path to JSON file containing comments
         extract_with_llm: Whether to extract structured data using LLM (default: True)
+        profile_path: Path to YAML profile defining regex patterns (default: engineering management profile)
 
     Returns:
         List of match dictionaries with comment info and matched text
@@ -417,8 +405,9 @@ def search_engineering_management_roles(
     print(f"Loaded {len(comments)} comments")
 
     # Compile patterns
-    patterns = compile_engineering_management_patterns()
-    print(f"Using {len(patterns)} search patterns")
+    profile_file = Path(profile_path) if profile_path else DEFAULT_PROFILE_PATH
+    patterns = compile_patterns_from_profile(profile_file)
+    print(f"Using {len(patterns)} search patterns from profile: {profile_file.name}")
 
     # Initialize OpenAI client if extraction is enabled
     client = None
@@ -674,6 +663,10 @@ def parse_args() -> argparse.Namespace:
         help="Mode: search comments for engineering management roles (Head of Eng, VP Eng, Director of Engineering, etc.).",
     )
     parser.add_argument(
+        "--profile",
+        help="Path to YAML profile defining role search patterns (default: profiles/engineering_management.yaml). Only used with --search-eng-management.",
+    )
+    parser.add_argument(
         "--extract-from-matches",
         action="store_true",
         help="Mode: extract structured data from existing matches JSON file using LLM.",
@@ -748,7 +741,9 @@ def main() -> None:
             args.output = "matches.json"
 
         matches = search_engineering_management_roles(
-            args.input, extract_with_llm=not args.no_extract
+            args.input,
+            extract_with_llm=not args.no_extract,
+            profile_path=args.profile,
         )
         write_json(matches, args.output)
         print(f"\nWrote {len(matches)} matches to {args.output}")
