@@ -2,14 +2,16 @@
 
 Run with: python who_is_hiring.py --months 24 --output who_is_hiring_posts.csv
 Or fetch comments: python who_is_hiring.py --fetch-comments --input posts.csv --output comments.json
+Or search for engineering management roles: python who_is_hiring.py --search-eng-management --input comments.json --output matches.json
 """
 
 import argparse
 import csv
 import datetime as dt
+import html
 import json
 import re
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import requests
 
@@ -204,9 +206,123 @@ def write_json(data: List[Dict], output_path: str) -> None:
         json.dump(data, jsonfile, indent=2, ensure_ascii=False)
 
 
+def compile_engineering_management_patterns() -> List[Tuple[re.Pattern, str]]:
+    """Compile regex patterns for matching engineering management roles.
+
+    Returns a list of (pattern, pattern_name) tuples.
+    """
+    patterns = []
+
+    # Pattern Group A: [Title] of [Engineering]
+    # e.g., "Head of Engineering", "VP of Software Development"
+    pattern_a = re.compile(
+        r"\b(head|director|dir|der|vp|vpe|v\.?p\.?|vice\s+president|manager|mgr)\s+of\s+(eng|eng\'?g|engr|engineering|software\s+engineering|software\s+development|dev|development|tech|technology|programming)\b",
+        re.IGNORECASE,
+    )
+    patterns.append((pattern_a, "title_of_engineering"))
+
+    # Pattern Group B: [Engineering] [Title]
+    # e.g., "Engineering Director", "Software Engineering Manager"
+    # Note: Excludes "lead|leader" to avoid IC roles like "Engineering Lead"
+    pattern_b = re.compile(
+        r"\b(eng|eng\'?g|engr|engineering|software\s+engineering|software\s+development|dev|development|tech|technology|programming)\s+(head|director|dir|der|vp|vpe|v\.?p\.?|vice\s+president|manager|mgr)\b",
+        re.IGNORECASE,
+    )
+    patterns.append((pattern_b, "engineering_title"))
+
+    # Pattern Group C: [Title], [Engineering]
+    # e.g., "Director, Engineering"
+    pattern_c = re.compile(
+        r"\b(head|director|dir|der|vp|vpe|v\.?p\.?|vice\s+president|manager|mgr),\s*(eng|eng\'?g|engr|engineering|software\s+engineering|software\s+development|dev|development|tech|technology)\b",
+        re.IGNORECASE,
+    )
+    patterns.append((pattern_c, "title_comma_engineering"))
+
+    # Pattern Group D: Abbreviated forms
+    # e.g., "VP Eng", "Dir of ENG", "DER"
+    pattern_d = re.compile(
+        r"\b(head|dir|der|vp|vpe)\s+(of\s+)?(eng|eng\'?g|engr)\b", re.IGNORECASE
+    )
+    patterns.append((pattern_d, "abbreviated_form"))
+
+    # Pattern Group E: Senior/Principal with management
+    # e.g., "Senior Engineering Manager", "Principal Software Director"
+    # Note: Excludes "lead" to avoid IC roles like "Senior Engineering Lead"
+    pattern_e = re.compile(
+        r"\b(senior|principal)\s+(engineering|software|dev|development)\s+(manager|director|head|vp|vpe)\b",
+        re.IGNORECASE,
+    )
+    patterns.append((pattern_e, "senior_principal_management"))
+
+    return patterns
+
+
+def search_engineering_management_roles(comments_path: str) -> List[Dict]:
+    """Search comments for engineering management role postings.
+
+    Args:
+        comments_path: Path to JSON file containing comments
+
+    Returns:
+        List of match dictionaries with comment info and matched text
+    """
+    # Load comments
+    print(f"Loading comments from {comments_path}...")
+    with open(comments_path, "r", encoding="utf-8") as f:
+        comments = json.load(f)
+
+    print(f"Loaded {len(comments)} comments")
+
+    # Compile patterns
+    patterns = compile_engineering_management_patterns()
+    print(f"Using {len(patterns)} search patterns")
+
+    matches = []
+
+    # Search through each comment
+    for idx, comment in enumerate(comments):
+        if (idx + 1) % 1000 == 0:
+            print(
+                f"  Processed {idx + 1}/{len(comments)} comments, found {len(matches)} matches so far..."
+            )
+
+        content = comment.get("content", "")
+        if not content:
+            continue
+
+        # Decode HTML entities
+        decoded_content = html.unescape(content)
+
+        # Try each pattern
+        for pattern, pattern_name in patterns:
+            for match in pattern.finditer(decoded_content):
+                # Extract surrounding context (100 chars before and after)
+                start = max(0, match.start() - 100)
+                end = min(len(decoded_content), match.end() + 100)
+                context = decoded_content[start:end]
+
+                matches.append(
+                    {
+                        "comment_index": idx,
+                        "post_url": comment.get("post_url", ""),
+                        "commenter": comment.get("commenter", ""),
+                        "date": comment.get("date", ""),
+                        "matched_text": match.group(0),
+                        "pattern_name": pattern_name,
+                        "context": context,
+                        "full_content": decoded_content,  # Include full content for review
+                    }
+                )
+                # Only record first match per pattern per comment to avoid duplicates
+                break
+
+    print(f"\nFound {len(matches)} total matches")
+    return matches
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch 'Ask HN: Who is hiring?' threads and save them to CSV, or fetch comments from posts."
+        description="Fetch 'Ask HN: Who is hiring?' threads and save them to CSV, or fetch comments from posts, or search for engineering management roles."
     )
     parser.add_argument(
         "--fetch-comments",
@@ -214,9 +330,14 @@ def parse_args() -> argparse.Namespace:
         help="Mode: fetch comments from posts in CSV file instead of fetching post URLs.",
     )
     parser.add_argument(
+        "--search-eng-management",
+        action="store_true",
+        help="Mode: search comments for engineering management roles (Head of Eng, VP Eng, Director of Engineering, etc.).",
+    )
+    parser.add_argument(
         "--input",
         default="posts.csv",
-        help="Input CSV file (for --fetch-comments mode, default: posts.csv).",
+        help="Input file (CSV for --fetch-comments mode, JSON for --search-eng-management mode, default: posts.csv).",
     )
     parser.add_argument(
         "--months",
@@ -227,7 +348,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default="who_is_hiring_posts.csv",
-        help="Path to write output (default: who_is_hiring_posts.csv for posts, comments.json for comments).",
+        help="Path to write output (default: who_is_hiring_posts.csv for posts, comments.json for comments, matches.json for search).",
     )
     return parser.parse_args()
 
@@ -235,7 +356,24 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    if args.fetch_comments:
+    if args.search_eng_management:
+        # Mode 3: Search for engineering management roles
+        if not args.output.endswith(".json"):
+            # Default to matches.json if not specified
+            if args.output == "who_is_hiring_posts.csv":
+                args.output = "matches.json"
+
+        # Safety check: don't overwrite comments.json
+        if args.output == "comments.json":
+            print(
+                "Error: Cannot write to comments.json (protected file). Using matches.json instead."
+            )
+            args.output = "matches.json"
+
+        matches = search_engineering_management_roles(args.input)
+        write_json(matches, args.output)
+        print(f"\nWrote {len(matches)} matches to {args.output}")
+    elif args.fetch_comments:
         # Mode 2: Fetch comments from posts in CSV
         if not args.output.endswith(".json"):
             # Default to .json if not specified
