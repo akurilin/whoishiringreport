@@ -16,8 +16,14 @@ Script to pull recent Hacker News "Who is hiring?" threads, scrape comments, fin
   ```
 
 ## Quick start
-- Make sure your virtualenv is created and activated, and dependencies installed (`pip install -r requirements.txt`), before running `make all`.
-- One-liner pipeline (fetch posts → comments → matches → extraction → report):
+- Zero-thinking copy/paste (creates venv, installs deps, runs pipeline with default engineering management profile):
+  ```bash
+  python3 -m venv .venv
+  source .venv/bin/activate
+  pip install -r requirements.txt
+  make all PROFILE=profiles/engineering_management.yaml
+  ```
+- One-liner pipeline with explicit paths (fetch posts → comments → matches → extraction → report):
   ```bash
   make all MONTHS=6 \
     POSTS=out/posts.json \
