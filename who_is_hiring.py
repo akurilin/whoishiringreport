@@ -65,7 +65,11 @@ class AnchorPreservingSanitizer(HTMLParser):
     @staticmethod
     def _is_safe_href(href: str) -> bool:
         lowered = href.lower()
-        return lowered.startswith("http://") or lowered.startswith("https://") or lowered.startswith("mailto:")
+        return (
+            lowered.startswith("http://")
+            or lowered.startswith("https://")
+            or lowered.startswith("mailto:")
+        )
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         if tag.lower() == "a":
@@ -87,9 +91,11 @@ class AnchorPreservingSanitizer(HTMLParser):
         if tag.lower() == "a":
             self.parts.append("</a>")
         else:
-            self.parts.append(html.escape(f"</{tag}>") )
+            self.parts.append(html.escape(f"</{tag}>"))
 
-    def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+    def handle_startendtag(
+        self, tag: str, attrs: List[Tuple[str, Optional[str]]]
+    ) -> None:
         # Escape self-closing tags (e.g., <br/>) to avoid rendering unintended HTML
         self.parts.append(html.escape(self.get_starttag_text()))
 
@@ -369,10 +375,7 @@ def fetch_comments_from_posts(
             f"  Found {len(post_comments)} comments (total so far: {len(all_comments)})"
         )
 
-        if (
-            max_comments_total is not None
-            and global_counter[0] >= max_comments_total
-        ):
+        if max_comments_total is not None and global_counter[0] >= max_comments_total:
             print("Reached max comment limit; stopping early.")
             break
 
@@ -783,23 +786,21 @@ def generate_html_report(
                 "company": (extracted.get("company_name") or "").strip(),
                 "role": (extracted.get("role_name") or "").strip(),
                 "location": (extracted.get("location") or "").strip(),
-                "remote": "Yes"
-                if is_remote_val
-                else "No"
-                if is_remote_val is False
-                else "—",
-                "remote_class": "remote-yes"
-                if is_remote_val
-                else "remote-no"
-                if is_remote_val is False
-                else "",
+                "remote": (
+                    "Yes" if is_remote_val else "No" if is_remote_val is False else "—"
+                ),
+                "remote_class": (
+                    "remote-yes"
+                    if is_remote_val
+                    else "remote-no" if is_remote_val is False else ""
+                ),
                 "employment": (extracted.get("employment_type") or "").strip(),
                 "cash_comp": (extracted.get("cash_compensation") or "").strip(),
-                "equity": "Yes"
-                if extracted.get("equity_compensation")
-                else "No"
-                if extracted.get("equity_compensation") is False
-                else "—",
+                "equity": (
+                    "Yes"
+                    if extracted.get("equity_compensation")
+                    else "No" if extracted.get("equity_compensation") is False else "—"
+                ),
                 "commenter": (match.get("commenter", "") or "").strip(),
                 "date": format_date(match.get("date", "") or ""),
                 "post_url": match.get("post_url", "") or "",
@@ -921,9 +922,21 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    # Hard fail fast if OPENAI_API_KEY is not set so behavior is predictable.
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print(
+            "Error: OPENAI_API_KEY not found in environment. "
+            "Please set it in your shell or a .env file before running who_is_hiring.py.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     slug = profile_slug(args.profile)
     default_matches_path = OUT_DIR / slug / "matches.json"
-    default_matches_with_extraction_path = OUT_DIR / slug / "matches_with_extraction.json"
+    default_matches_with_extraction_path = (
+        OUT_DIR / slug / "matches_with_extraction.json"
+    )
     default_report_path = OUT_DIR / slug / "report.html"
 
     if args.generate_html:
@@ -1038,9 +1051,7 @@ def main() -> None:
             since_date = dt.datetime.now(dt.timezone.utc) - dt.timedelta(
                 days=31 * args.months
             )
-            threads = fetch_who_is_hiring_threads(
-                since_date, max_posts=args.max_posts
-            )
+            threads = fetch_who_is_hiring_threads(since_date, max_posts=args.max_posts)
         write_posts_json(threads, output_path)
         print(f"Wrote {len(threads)} threads to {output_path}")
 
