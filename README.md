@@ -21,19 +21,30 @@ Fully vibe-coded script to pull recent Hacker News "Who is hiring?" threads, scr
 
 ## Run steps manually
 
-- Fetch post list (~N months back):  
-  `python who_is_hiring.py --months 6 --output out/posts.json`
-- Fetch comments for those posts:  
-  `python who_is_hiring.py --fetch-comments --input out/posts.json --output out/comments.json`
-- Find, for example, all engineering-management roles (uses `profiles/engineering_management.yaml` by default):  
-  `python who_is_hiring.py --search-eng-management --input out/comments.json --output out/engineering_management/matches.json`
-- Extract structured fields with the LLM (title, location, remote, comp, etc.):  
-  `python who_is_hiring.py --extract-from-matches --input out/engineering_management/matches.json --output out/engineering_management/matches_with_extraction.json`
-  - Add `--no-extract` on the search step to skip LLM usage entirely.
-- Generate the HTML report:  
-  `python who_is_hiring.py --generate-html --input out/engineering_management/matches_with_extraction.json --output out/engineering_management/report.html`
-- List available profiles: `make list-profiles`
-- See all flags: `python who_is_hiring.py -h`
+1) Fetch post list (~N months back):
+   ```bash
+   python who_is_hiring.py --months 6 --output out/posts.json
+   ```
+2) Fetch comments for those posts:
+   ```bash
+   python who_is_hiring.py --fetch-comments --input out/posts.json --output out/comments.json
+   ```
+3) Search for roles (defaults to engineering management profile):
+   ```bash
+   python who_is_hiring.py --search-eng-management --input out/comments.json --output out/engineering_management/matches.json
+   ```
+   - Add `--no-extract` to skip LLM usage entirely when searching.
+4) Extract structured fields (title, location, remote, comp, etc.):
+   ```bash
+   python who_is_hiring.py --extract-from-matches --input out/engineering_management/matches.json --output out/engineering_management/matches_with_extraction.json
+   ```
+5) Generate the HTML report:
+   ```bash
+   python who_is_hiring.py --generate-html --input out/engineering_management/matches_with_extraction.json --output out/engineering_management/report.html
+   ```
+6) Utilities:
+   - List available profiles: `make list-profiles`
+   - See all flags: `python who_is_hiring.py -h`
 
 ## Profiles (what they are and how to create one)
 - Profiles live in `profiles/*.yaml` and define regex patterns for the roles you want to catch (e.g., engineering management, UX/design).
