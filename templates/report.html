@@ -15,6 +15,8 @@
         .data-row { cursor: pointer; }
         .cell-text { cursor: text; }
         .detail-content { max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.25s ease; }
+        .detail-accent::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: #4f46e5; }
+        .detail-box { padding: 16px; }
     </style>
 </head>
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">
@@ -62,7 +64,7 @@
         </div>
         
         <div class="overflow-x-auto max-h-[70vh]">
-            <table id="matches-table" class="w-full text-sm">
+            <table id="matches-table" class="w-full text-sm table-fixed min-w-[1100px] border-collapse">
                 <thead class="bg-indigo-600 text-white sticky top-0 z-10">
                     <tr>
                         <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(0)">Company</th>
@@ -96,9 +98,9 @@
                         </td>
                     </tr>
                     <tr id="{{ row.row_id }}-detail" class="detail-row bg-slate-50" style="display: none;">
-                        <td colspan="10" class="px-6 py-4 border-l-4 border-indigo-500">
+                        <td colspan="10" class="relative p-0 detail-accent">
                             <div class="detail-content">
-                                <div class="space-y-4">
+                                <div class="detail-box space-y-4">
                                     <div>
                                         <h4 class="text-indigo-600 font-semibold mb-1">Matched Text:</h4>
                                         <p class="matched-text inline-block px-3 py-1 rounded bg-slate-200 text-slate-800 font-semibold">{{ row.matched_text | e }}</p>
