@@ -13,6 +13,7 @@ import datetime as dt
 import html
 import json
 import os
+from html.parser import HTMLParser
 import re
 import sys
 import time
@@ -46,6 +47,74 @@ DEFAULT_POSTS_PATH = OUT_DIR / "posts.json"
 DEFAULT_POSTS_OUTPUT = DEFAULT_POSTS_PATH
 DEFAULT_COMMENTS_PATH = OUT_DIR / "comments.json"
 DEFAULT_OPENAI_MODEL = "gpt-4.1"
+
+
+class AnchorPreservingSanitizer(HTMLParser):
+    """Escape HTML while allowing safe <a> tags.
+
+    HN comments sometimes include anchor tags (e.g., markdown links rendered by HN).
+    We want those clickable in the report without allowing arbitrary HTML. This parser
+    escapes everything except http(s)/mailto anchors, which are re-emitted with
+    target/rel safety attributes.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: List[str] = []
+
+    @staticmethod
+    def _is_safe_href(href: str) -> bool:
+        lowered = href.lower()
+        return lowered.startswith("http://") or lowered.startswith("https://") or lowered.startswith("mailto:")
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if tag.lower() == "a":
+            href = ""
+            for name, value in attrs:
+                if name.lower() == "href" and value:
+                    href = value
+                    break
+            if href and self._is_safe_href(href):
+                safe_href = html.escape(href, quote=True)
+                self.parts.append(
+                    f'<a href="{safe_href}" target="_blank" rel="nofollow noreferrer">'
+                )
+                return
+
+        self.parts.append(html.escape(self.get_starttag_text()))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "a":
+            self.parts.append("</a>")
+        else:
+            self.parts.append(html.escape(f"</{tag}>") )
+
+    def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        # Escape self-closing tags (e.g., <br/>) to avoid rendering unintended HTML
+        self.parts.append(html.escape(self.get_starttag_text()))
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(html.escape(data))
+
+    def handle_entityref(self, name: str) -> None:
+        # Preserve original entities instead of decoding to keep intent clear
+        self.parts.append(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self.parts.append(f"&#{name};")
+
+
+def sanitize_full_content(content: str) -> str:
+    """Return HTML-safe content while keeping anchors clickable."""
+
+    if not content:
+        return ""
+
+    parser = AnchorPreservingSanitizer()
+    parser.feed(content)
+    parser.close()
+    sanitized = "".join(parser.parts)
+    return sanitized.replace("\n", "<br>")
 
 
 def fetch_who_is_hiring_threads(
@@ -707,6 +776,7 @@ def generate_html_report(
     for idx, match in enumerate(matches):
         extracted = match.get("extracted", {}) or {}
         is_remote_val = extracted.get("is_remote")
+        full_content_raw = match.get("full_content", "") or ""
         rows.append(
             {
                 "row_id": f"row-{idx}",
@@ -734,7 +804,8 @@ def generate_html_report(
                 "date": format_date(match.get("date", "") or ""),
                 "post_url": match.get("post_url", "") or "",
                 "matched_text": match.get("matched_text", "") or "",
-                "full_content": match.get("full_content", "") or "",
+                "full_content": full_content_raw,
+                "full_content_html": sanitize_full_content(full_content_raw),
             }
         )
 

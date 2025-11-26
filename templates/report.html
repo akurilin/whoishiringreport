@@ -19,6 +19,7 @@
         .detail-content { max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.25s ease; }
         .detail-accent::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: #4f46e5; }
         .detail-box { padding: 16px; }
+        .full-content a { color: #2563eb; text-decoration: underline; word-break: break-word; }
     </style>
 </head>
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">
@@ -109,7 +110,7 @@
                                     </div>
                                     <div>
                                         <h4 class="text-indigo-600 font-semibold mb-2">Full Content:</h4>
-                                        <div class="full-content leading-6 text-slate-900 whitespace-pre-wrap break-words">{{ row.full_content | e | replace('\n', '<br>') | safe }}</div>
+                                        <div class="full-content leading-6 text-slate-900 whitespace-pre-wrap break-words">{{ row.full_content_html | safe }}</div>
                                     </div>
                                 </div>
                             </div>
