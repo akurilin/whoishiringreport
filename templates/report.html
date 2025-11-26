@@ -12,6 +12,8 @@
         th.sort-desc::after { content: " ↓"; opacity: 1; }
         .remote-yes { color: #16a34a; font-weight: 600; }
         .remote-no { color: #6b7280; }
+        .btn-hn { background: #ff6600; }
+        .btn-hn:hover { background: #e65a00; }
         .data-row { cursor: pointer; }
         .cell-text { cursor: text; }
         .detail-content { max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.25s ease; }
@@ -93,7 +95,7 @@
                         <td class="px-4 py-3 text-slate-600 whitespace-nowrap"><span class="cell-text">{{ row.date | e }}</span></td>
                         <td class="px-4 py-3">
                             <div class="flex gap-2">
-                                <a href="{{ row.post_url | e }}" target="_blank" class="link-btn inline-flex items-center px-3 py-2 rounded-md bg-slate-600 text-white text-xs font-semibold hover:bg-slate-500">HN</a>
+                                <a href="{{ row.post_url | e }}" target="_blank" class="link-btn inline-flex items-center px-3 py-2 rounded-md btn-hn text-white text-xs font-semibold">HN</a>
                             </div>
                         </td>
                     </tr>
