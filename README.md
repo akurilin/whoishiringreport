@@ -2,6 +2,9 @@
 
 Fully vibe-coded script to pull recent Hacker News "Who is hiring?" threads, scrape comments, find all comments mentioning a particular role, and produce an interactive HTML report.
 
+## Report preview
+![Interactive report screenshot](docs/assets/report.png)
+
 ## Quick start
 - Zero-thinking copy/paste (creates venv, installs deps, runs pipeline with default engineering management profile):
   ```bash
