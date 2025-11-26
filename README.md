@@ -16,6 +16,7 @@ Script to pull recent Hacker News "Who is hiring?" threads, scrape comments, fin
   ```
 
 ## Quick start
+- Make sure your virtualenv is created and activated, and dependencies installed (`pip install -r requirements.txt`), before running `make all`.
 - One-liner pipeline (fetch posts → comments → matches → extraction → report):
   ```bash
   make all MONTHS=6 \
