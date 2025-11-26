@@ -3,25 +3,27 @@
 PYTHON := .venv/bin/python
 ACTIVATE := . .venv/bin/activate &&
 MONTHS ?= 6
-POSTS ?= out/posts.csv
+POSTS ?= out/posts.json
 COMMENTS ?= out/comments.json
 MATCHES ?= out/matches.json
 EXTRACTED ?= out/matches_with_extraction.json
 REPORT ?= out/report.html
 TEST_OUT ?= out/test
 TEST_POST_ID ?=
+REFRESH_CACHE ?=
+PROFILE ?=
 
 posts:
 	@mkdir -p $(dir $(POSTS))
-	$(ACTIVATE) $(PYTHON) who_is_hiring.py --months $(MONTHS) --output $(POSTS)
+	$(ACTIVATE) $(PYTHON) who_is_hiring.py --months $(MONTHS) --output $(POSTS) $(if $(REFRESH_CACHE),--refresh-cache,)
 
 comments:
 	@mkdir -p $(dir $(COMMENTS))
-	$(ACTIVATE) $(PYTHON) who_is_hiring.py --fetch-comments --input $(POSTS) --output $(COMMENTS)
+	$(ACTIVATE) $(PYTHON) who_is_hiring.py --fetch-comments --input $(POSTS) --output $(COMMENTS) $(if $(REFRESH_CACHE),--refresh-cache,)
 
 matches:
 	@mkdir -p $(dir $(MATCHES))
-	$(ACTIVATE) $(PYTHON) who_is_hiring.py --search-eng-management --input $(COMMENTS) --output $(MATCHES)
+	$(ACTIVATE) $(PYTHON) who_is_hiring.py --search-eng-management --input $(COMMENTS) --output $(MATCHES) $(if $(PROFILE),--profile $(PROFILE),)
 
 extract:
 	@mkdir -p $(dir $(EXTRACTED))

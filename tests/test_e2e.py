@@ -1,5 +1,4 @@
 import os
-import csv
 import json
 from pathlib import Path
 import subprocess
@@ -18,7 +17,7 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
     out_dir = Path(os.getenv("TEST_OUT", repo_root / "out" / "test"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    posts_path = out_dir / "posts.csv"
+    posts_path = out_dir / "posts.json"
     comments_path = out_dir / "comments.json"
     matches_path = out_dir / "matches.json"
     extracted_path = out_dir / "matches_with_extraction.json"
@@ -45,7 +44,7 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
     test_post_id = "45800465"
 
     # 1) Fetch posts (one only, or a specific ID).
-    post_args = ["--output", str(posts_path)]
+    post_args = ["--output", str(posts_path), "--refresh-cache"]
     post_args.extend(["--post-id", str(test_post_id)])
     run_cmd(post_args)
 
@@ -57,6 +56,7 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
             str(posts_path),
             "--output",
             str(comments_path),
+            "--refresh-cache",
             "--comments-per-post",
             "10",
             "--max-comments-total",
@@ -103,8 +103,8 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
     )
 
     # Validations (black-box outputs).
-    with open(posts_path, newline="", encoding="utf-8") as f:
-        posts = list(csv.DictReader(f))
+    with open(posts_path, encoding="utf-8") as f:
+        posts = json.load(f)
     assert len(posts) == 1, f"Expected 1 post, got {len(posts)}"
 
     with open(comments_path, encoding="utf-8") as f:
