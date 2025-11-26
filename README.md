@@ -1,19 +1,6 @@
-# HN "Who Is Hiring?" tracker
+# HN "Who Is Hiring?" Report Generator
 
-Script to pull recent Hacker News "Who is hiring?" threads, scrape comments, find engineering-management roles, and produce an interactive HTML report.
-
-## Setup
-- Requires Python 3.10+.
-- Create a venv and install deps (keeps `pip` installs local):
-  ```bash
-  python3 -m venv .venv
-  source .venv/bin/activate
-  pip install -r requirements.txt
-  ```
-- LLM extraction needs an OpenAI key in `.env`:
-  ```
-  OPENAI_API_KEY=sk-...
-  ```
+Fully vibe-coded script to pull recent Hacker News "Who is hiring?" threads, scrape comments, find all comments mentioning a particular role, and produce an interactive HTML report.
 
 ## Quick start
 - Zero-thinking copy/paste (creates venv, installs deps, runs pipeline with default engineering management profile):
@@ -23,21 +10,10 @@ Script to pull recent Hacker News "Who is hiring?" threads, scrape comments, fin
   pip install -r requirements.txt
   make all PROFILE=profiles/engineering_management.yaml
   ```
-- One-liner pipeline with explicit paths (fetch posts → comments → matches → extraction → report):
-  ```bash
-  make all MONTHS=6 \
-    POSTS=out/posts.json \
-    COMMENTS=out/comments.json \
-    PROFILE=profiles/engineering_management.yaml \
-    MATCHES=out/engineering_management/matches.json \
-    EXTRACTED=out/engineering_management/matches_with_extraction.json \
-    REPORT=out/engineering_management/report.html
-  ```
 - Swap profiles without clobbering others:
   ```bash
   make all PROFILE=profiles/ux_designer.yaml
   ```
-- Open `out/report.html` in your browser to browse matches.
 - Adjust `MONTHS` to limit how far back to search. Outputs default to `out/` unless overridden.
 
 ## Run steps manually
