@@ -1,0 +1,12 @@
+patterns:
+  # Mid/senior engineering leadership — no plain engineering managers or ICs.
+  - name: "leadership_of_eng_tech"
+    regex: "\\b(head|director|dir|der|vp|vpe|v\\.??p\\.??|vice\\s+president)\\s+of\\s+(eng|eng\\'?g|engr|engineering|software\\s+engineering|software\\s+development|dev|development|tech|technology)\\b"
+  - name: "leadership_eng_tech"
+    regex: "\\b(eng|eng\\'?g|engr|engineering|software\\s+engineering|software\\s+development|dev|development|tech|technology)\\s+(head|director|dir|der|vp|vpe|v\\.??p\\.??|vice\\s+president)\\b"
+  # Senior-level managers only (explicitly require senior/sr to avoid plain engineering manager).
+  - name: "senior_engineering_manager"
+    regex: "\\b(senior|sr)\\s+(engineering|software\\s+engineering|software\\s+development|dev|development|tech|technology)\\s+(manager|mgr)\\b"
+  # Senior manager variants with comma-separated form, still requiring senior qualifier.
+  - name: "senior_manager_comma_eng"
+    regex: "\\b(senior|sr)\\s+(manager|mgr),?\\s*(software\\s+development|software\\s+engineering|engineering|tech|technology)\\b"

@@ -2,25 +2,29 @@
 
 PYTHON := .venv/bin/python
 ACTIVATE := . .venv/bin/activate &&
-MONTHS ?= 24
-POSTS ?= posts.csv
-COMMENTS ?= comments.json
-MATCHES ?= matches.json
-EXTRACTED ?= matches_with_extraction.json
+MONTHS ?= 6
+POSTS ?= out/posts.csv
+COMMENTS ?= out/comments.json
+MATCHES ?= out/matches.json
+EXTRACTED ?= out/matches_with_extraction.json
 REPORT ?= out/report.html
 TEST_OUT ?= out/test
 TEST_POST_ID ?=
 
 posts:
+	@mkdir -p $(dir $(POSTS))
 	$(ACTIVATE) $(PYTHON) who_is_hiring.py --months $(MONTHS) --output $(POSTS)
 
 comments:
+	@mkdir -p $(dir $(COMMENTS))
 	$(ACTIVATE) $(PYTHON) who_is_hiring.py --fetch-comments --input $(POSTS) --output $(COMMENTS)
 
 matches:
+	@mkdir -p $(dir $(MATCHES))
 	$(ACTIVATE) $(PYTHON) who_is_hiring.py --search-eng-management --input $(COMMENTS) --output $(MATCHES)
 
 extract:
+	@mkdir -p $(dir $(EXTRACTED))
 	$(ACTIVATE) $(PYTHON) who_is_hiring.py --extract-from-matches --input $(MATCHES) --output $(EXTRACTED)
 
 report:

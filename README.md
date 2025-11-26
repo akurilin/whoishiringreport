@@ -18,8 +18,8 @@ Script to pull recent Hacker News "Who is hiring?" threads, scrape comments, fin
 ## Quick start
 - One-liner pipeline (fetch posts → comments → matches → extraction → report):
   ```bash
-  make all MONTHS=24 \
-    POSTS=posts.csv \
+  make all MONTHS=6 \
+    POSTS=out/posts.csv \
     COMMENTS=out/comments.json \
     MATCHES=out/matches.json \
     EXTRACTED=out/matches_with_extraction.json \
@@ -30,9 +30,9 @@ Script to pull recent Hacker News "Who is hiring?" threads, scrape comments, fin
 
 ## Run steps manually
 - Fetch post list (~N months back):  
-  `python who_is_hiring.py --months 24 --output posts.csv`
+  `python who_is_hiring.py --months 6 --output out/posts.csv`
 - Fetch comments for those posts:  
-  `python who_is_hiring.py --fetch-comments --input posts.csv --output out/comments.json`
+  `python who_is_hiring.py --fetch-comments --input out/posts.csv --output out/comments.json`
 - Find engineering-management roles (uses `profiles/engineering_management.yaml`):  
   `python who_is_hiring.py --search-eng-management --input out/comments.json --output out/matches.json`
 - Find UX/design roles (swap in the UX profile):  
@@ -47,7 +47,7 @@ Script to pull recent Hacker News "Who is hiring?" threads, scrape comments, fin
 
 ## Notes
 - If `OPENAI_API_KEY` is missing, extraction is skipped; matches still write but lack enriched fields.
-- Cached inputs (`posts.csv`, `out/comments.json`, etc.) let you rerun later steps without re-scraping.
+- Cached inputs (`out/posts.csv`, `out/comments.json`, etc.) let you rerun later steps without re-scraping.
 - The script hits the HN Algolia API for post discovery and the official HN API for comments.
 
 ## Tests

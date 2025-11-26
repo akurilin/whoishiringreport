@@ -1,6 +1,6 @@
 """Fetch recent 'Ask HN: Who is hiring?' threads and save them to CSV.
 
-Run with: python who_is_hiring.py --months 24 --output who_is_hiring_posts.csv
+Run with: python who_is_hiring.py --months 6 --output who_is_hiring_posts.csv
 Or fetch comments: python who_is_hiring.py --fetch-comments --input posts.csv --output out/comments.json
 Or search for engineering management roles: python who_is_hiring.py --search-eng-management --input out/comments.json --output out/matches.json
 Or extract from matches: python who_is_hiring.py --extract-from-matches --input out/matches.json --output out/matches_with_extraction.json
@@ -834,8 +834,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--months",
         type=int,
-        default=24,
-        help="How many months back to search (approximate, default: 24). Only used in default mode.",
+        default=6,
+        help="How many months back to search (approximate, default: 6). Only used in default mode.",
     )
     parser.add_argument(
         "--output",
