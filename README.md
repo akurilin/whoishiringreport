@@ -21,10 +21,10 @@ Script to pull recent Hacker News "Who is hiring?" threads, scrape comments, fin
   make all MONTHS=6 \
     POSTS=out/posts.json \
     COMMENTS=out/comments.json \
-    MATCHES=out/matches.json \
     PROFILE=profiles/engineering_management.yaml \
-    EXTRACTED=out/matches_with_extraction.json \
-    REPORT=out/report.html
+    MATCHES=out/engineering_management/matches.json \
+    EXTRACTED=out/engineering_management/matches_with_extraction.json \
+    REPORT=out/engineering_management/report.html
   ```
 - Open `out/report.html` in your browser to browse matches.
 - Adjust `MONTHS` to limit how far back to search. Outputs default to `out/` unless overridden.
@@ -34,23 +34,24 @@ Script to pull recent Hacker News "Who is hiring?" threads, scrape comments, fin
   `python who_is_hiring.py --months 6 --output out/posts.json`
 - Fetch comments for those posts:  
   `python who_is_hiring.py --fetch-comments --input out/posts.json --output out/comments.json`
-- Find engineering-management roles (uses `profiles/engineering_management.yaml`):  
-  `python who_is_hiring.py --search-eng-management --input out/comments.json --output out/matches.json`
+- Find engineering-management roles (uses `profiles/engineering_management.yaml` by default):  
+  `python who_is_hiring.py --search-eng-management --input out/comments.json --output out/engineering_management/matches.json`
 - Find UX/design roles (swap in the UX profile):  
-  `python who_is_hiring.py --search-eng-management --profile profiles/ux_designer.yaml --input out/comments.json --output out/ux_matches.json`
+  `python who_is_hiring.py --search-eng-management --profile profiles/ux_designer.yaml --input out/comments.json --output out/ux_designer/matches.json`
 - Extract structured fields with the LLM (title, location, remote, comp, etc.):  
-  `python who_is_hiring.py --extract-from-matches --input out/matches.json --output out/matches_with_extraction.json`
+  `python who_is_hiring.py --extract-from-matches --input out/engineering_management/matches.json --output out/engineering_management/matches_with_extraction.json`
   - Add `--no-extract` on the search step to skip LLM usage entirely.
 - Generate the HTML report:  
-  `python who_is_hiring.py --generate-html --input out/matches_with_extraction.json --output out/report.html`
+  `python who_is_hiring.py --generate-html --input out/engineering_management/matches_with_extraction.json --output out/engineering_management/report.html`
 - The report opens automatically in your default browser; add `--no-open-report` to skip (e.g., in tests/CI).
 - Pass `--refresh-cache` to the post or comment steps to force re-downloads; otherwise cached `posts.json`/`comments.json` will be reused.
-- Provide `PROFILE=profiles/ux_designer.yaml` (or any other profile) to `make all` to run the pipeline with an alternate role profile.
+- Provide `PROFILE=profiles/ux_designer.yaml` (or any other profile) to `make all` to run the pipeline with an alternate role profile; defaults route per-profile outputs into `out/{profile_stem}/`.
+- List available profiles: `make list-profiles`
 - See all flags: `python who_is_hiring.py -h`
 
 ## Notes
 - If `OPENAI_API_KEY` is missing, extraction is skipped; matches still write but lack enriched fields.
-- Cached inputs (`out/posts.json`, `out/comments.json`, etc.) let you rerun later steps without re-scraping; the script now reuses them by default.
+- Cached inputs (`out/posts.json`, `out/comments.json`, etc.) let you rerun later steps without re-scraping; the script now reuses them by default. Per-profile outputs land in `out/{profile_stem}/` to avoid clobbering other profiles.
 - The script hits the HN Algolia API for post discovery and the official HN API for comments.
 
 ## Tests

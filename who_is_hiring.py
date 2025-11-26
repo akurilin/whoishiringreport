@@ -2,9 +2,9 @@
 
 Run with: python who_is_hiring.py --months 6 --output posts.json
 Or fetch comments: python who_is_hiring.py --fetch-comments --input posts.json --output out/comments.json
-Or search for engineering management roles: python who_is_hiring.py --search-eng-management --input out/comments.json --output out/matches.json
-Or extract from matches: python who_is_hiring.py --extract-from-matches --input out/matches.json --output out/matches_with_extraction.json
-Or generate HTML report: python who_is_hiring.py --generate-html --input out/matches_with_extraction.json --output out/report.html
+Or search roles: python who_is_hiring.py --search-eng-management --profile profiles/engineering_management.yaml --input out/comments.json --output out/engineering_management/matches.json
+Or extract from matches: python who_is_hiring.py --extract-from-matches --input out/engineering_management/matches.json --output out/engineering_management/matches_with_extraction.json
+Or generate HTML report: python who_is_hiring.py --generate-html --input out/engineering_management/matches_with_extraction.json --output out/engineering_management/report.html
 """
 
 import argparse
@@ -42,12 +42,9 @@ ID_FROM_URL_PATTERN = re.compile(r"id=(\d+)")
 BASE_DIR = Path(__file__).parent
 OUT_DIR = BASE_DIR / "out"
 DEFAULT_PROFILE_PATH = BASE_DIR / "profiles" / "engineering_management.yaml"
-DEFAULT_POSTS_PATH = BASE_DIR / "posts.json"
+DEFAULT_POSTS_PATH = OUT_DIR / "posts.json"
 DEFAULT_POSTS_OUTPUT = DEFAULT_POSTS_PATH
 DEFAULT_COMMENTS_PATH = OUT_DIR / "comments.json"
-DEFAULT_MATCHES_PATH = OUT_DIR / "matches.json"
-DEFAULT_MATCHES_WITH_EXTRACTION_PATH = OUT_DIR / "matches_with_extraction.json"
-DEFAULT_REPORT_PATH = OUT_DIR / "report.html"
 DEFAULT_OPENAI_MODEL = "gpt-4.1"
 
 
@@ -117,6 +114,15 @@ def fetch_who_is_hiring_threads(
 def write_posts_json(rows: Iterable[Dict], output_path: str) -> None:
     """Write posts to JSON in a consistent schema."""
     write_json(list(rows), output_path)
+
+
+def profile_slug(profile_path: Optional[str]) -> str:
+    """Create a safe slug from a profile path (basename without extension)."""
+    if not profile_path:
+        return "engineering_management"
+    slug = Path(profile_path).stem
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", slug)
+    return slug or "profile"
 
 
 def fetch_hn_item(item_id: int) -> Optional[Dict]:
@@ -772,7 +778,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--profile",
-        help="Path to YAML profile defining role search patterns (default: profiles/engineering_management.yaml). Only used with --search-eng-management.",
+        help="Path to YAML profile defining role search patterns (default: profiles/engineering_management.yaml). Used for search (and to set per-profile output defaults).",
     )
     parser.add_argument(
         "--extract-from-matches",
@@ -821,7 +827,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--input",
-        help="Input file (JSON for all modes; defaults are posts.json, out/comments.json, out/matches.json, and out/matches_with_extraction.json respectively).",
+        help="Input file (JSON for all modes; defaults are out/posts.json, out/comments.json, out/matches.json, and out/matches_with_extraction.json respectively).",
     )
     parser.add_argument(
         "--months",
@@ -831,7 +837,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output",
-        help="Path to write output (defaults depend on mode: posts.json for posts, out/comments.json for comments, out/matches.json for search, out/matches_with_extraction.json for extraction, out/report.html for HTML).",
+        help="Path to write output (defaults depend on mode: posts.json for posts, out/comments.json for comments, out/<profile>/matches.json for search, out/<profile>/matches_with_extraction.json for extraction, out/<profile>/report.html for HTML).",
     )
     parser.add_argument(
         "--refresh-cache",
@@ -844,31 +850,36 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    slug = profile_slug(args.profile)
+    default_matches_path = OUT_DIR / slug / "matches.json"
+    default_matches_with_extraction_path = OUT_DIR / slug / "matches_with_extraction.json"
+    default_report_path = OUT_DIR / slug / "report.html"
+
     if args.generate_html:
         # Mode 5: Generate HTML report
-        input_path = args.input or str(DEFAULT_MATCHES_WITH_EXTRACTION_PATH)
-        output_path = args.output or str(DEFAULT_REPORT_PATH)
+        input_path = args.input or str(default_matches_with_extraction_path)
+        output_path = args.output or str(default_report_path)
 
         generate_html_report(
             input_path, output_path, open_browser=not args.no_open_report
         )
     elif args.extract_from_matches:
         # Mode 4: Extract structured data from existing matches
-        input_path = args.input or str(DEFAULT_MATCHES_PATH)
-        output_path = args.output or str(DEFAULT_MATCHES_WITH_EXTRACTION_PATH)
+        input_path = args.input or str(default_matches_path)
+        output_path = args.output or str(default_matches_with_extraction_path)
 
         # Safety check: don't overwrite comments.json
         if Path(output_path).name == "comments.json":
             print(
                 "Error: Cannot write to comments.json (protected file). Using matches_with_extraction.json instead."
             )
-            output_path = str(DEFAULT_MATCHES_WITH_EXTRACTION_PATH)
+            output_path = str(default_matches_with_extraction_path)
 
         extract_from_matches(input_path, output_path)
     elif args.search_eng_management:
         # Mode 3: Search for engineering management roles
         input_path = args.input or str(DEFAULT_COMMENTS_PATH)
-        output_path = args.output or str(DEFAULT_MATCHES_PATH)
+        output_path = args.output or str(default_matches_path)
         profile_arg = args.profile
 
         if profile_arg:

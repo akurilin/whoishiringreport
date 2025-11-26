@@ -1,17 +1,19 @@
-.PHONY: posts comments matches extract report all test-e2e
+.PHONY: posts comments matches extract report all test-e2e list-profiles
 
 PYTHON := .venv/bin/python
 ACTIVATE := . .venv/bin/activate &&
 MONTHS ?= 6
 POSTS ?= out/posts.json
 COMMENTS ?= out/comments.json
-MATCHES ?= out/matches.json
-EXTRACTED ?= out/matches_with_extraction.json
-REPORT ?= out/report.html
+PROFILE ?=
+# Derive a slug from the profile filename (or default to engineering_management)
+PROFILE_SLUG := $(if $(PROFILE),$(basename $(notdir $(PROFILE))),engineering_management)
+MATCHES ?= out/$(PROFILE_SLUG)/matches.json
+EXTRACTED ?= out/$(PROFILE_SLUG)/matches_with_extraction.json
+REPORT ?= out/$(PROFILE_SLUG)/report.html
 TEST_OUT ?= out/test
 TEST_POST_ID ?=
 REFRESH_CACHE ?=
-PROFILE ?=
 
 posts:
 	@mkdir -p $(dir $(POSTS))
@@ -38,3 +40,7 @@ all: posts comments matches extract report
 test-e2e:
 	@mkdir -p $(TEST_OUT)
 	$(ACTIVATE) $(PYTHON) -m pytest tests/test_e2e.py -q
+
+list-profiles:
+	@echo "Available profiles:"
+	@ls profiles/*.yaml 2>/dev/null || echo "  (none found)"
