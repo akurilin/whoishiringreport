@@ -31,7 +31,7 @@ Fully vibe-coded script to pull recent Hacker News "Who is hiring?" threads, scr
    ```
 3) Search for roles (defaults to engineering management profile):
    ```bash
-   python who_is_hiring.py --search-eng-management --input out/comments.json --output out/engineering_management/matches.json
+   python who_is_hiring.py --search --input out/comments.json --output out/engineering_management/matches.json
    ```
    - Add `--no-extract` to skip LLM usage entirely when searching.
 4) Extract structured fields (title, location, remote, comp, etc.):

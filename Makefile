@@ -25,7 +25,7 @@ comments:
 
 matches:
 	@mkdir -p $(dir $(MATCHES))
-	$(ACTIVATE) $(PYTHON) who_is_hiring.py --search-eng-management --input $(COMMENTS) --output $(MATCHES) $(if $(PROFILE),--profile $(PROFILE),)
+	$(ACTIVATE) $(PYTHON) who_is_hiring.py --search --no-extract --input $(COMMENTS) --output $(MATCHES) $(if $(PROFILE),--profile $(PROFILE),)
 
 extract:
 	@mkdir -p $(dir $(EXTRACTED))

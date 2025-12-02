@@ -2,7 +2,7 @@
 
 Run with: python who_is_hiring.py --months 6 --output posts.json
 Or fetch comments: python who_is_hiring.py --fetch-comments --input posts.json --output out/comments.json
-Or search roles: python who_is_hiring.py --search-eng-management --profile profiles/engineering_management.yaml --input out/comments.json --output out/engineering_management/matches.json
+Or search roles: python who_is_hiring.py --search --profile profiles/engineering_management.yaml --input out/comments.json --output out/engineering_management/matches.json
 Or extract from matches: python who_is_hiring.py --extract-from-matches --input out/engineering_management/matches.json --output out/engineering_management/matches_with_extraction.json
 Or generate HTML report: python who_is_hiring.py --generate-html --input out/engineering_management/matches_with_extraction.json --output out/engineering_management/report.html
 """
@@ -47,6 +47,8 @@ DEFAULT_POSTS_PATH = OUT_DIR / "posts.json"
 DEFAULT_POSTS_OUTPUT = DEFAULT_POSTS_PATH
 DEFAULT_COMMENTS_PATH = OUT_DIR / "comments.json"
 DEFAULT_OPENAI_MODEL = "gpt-4.1"
+SCHEMA_VERSION = 1
+DEFAULT_LAST_SYNC = dt.datetime(2025, 11, 29, tzinfo=dt.timezone.utc).isoformat()
 
 
 class AnchorPreservingSanitizer(HTMLParser):
@@ -188,7 +190,14 @@ def fetch_who_is_hiring_threads(
 
 def write_posts_json(rows: Iterable[Dict], output_path: str) -> None:
     """Write posts to JSON in a consistent schema."""
-    write_json(list(rows), output_path)
+    cache = {
+        "items": list(rows),
+        "metadata": {
+            "last_synced_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "schema_version": SCHEMA_VERSION,
+        },
+    }
+    write_json(cache, output_path)
 
 
 def profile_slug(profile_path: Optional[str]) -> str:
@@ -318,12 +327,166 @@ def fetch_all_comments(
         )
 
 
+def fetch_new_comments_algolia(
+    post_id: int, post_url: str, since: Optional[dt.datetime]
+) -> List[Dict]:
+    """Fetch new top-level comments for a post via Algolia since a given timestamp."""
+
+    params = {
+        "tags": f"comment,story_{post_id}",
+        "hitsPerPage": 1000,
+        "page": 0,
+    }
+    if since is not None:
+        params["numericFilters"] = f"created_at_i>{int(since.timestamp())}"
+
+    comments: List[Dict] = []
+
+    while True:
+        try:
+            resp = requests.get(SEARCH_URL, params=params, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as exc:  # noqa: BLE001
+            print(
+                f"Error fetching comments via Algolia for post {post_id} page {params.get('page')}: {exc}"
+            )
+            break
+
+        hits = data.get("hits", [])
+        for hit in hits:
+            # Only keep top-level comments (parent is the story)
+            if hit.get("parent_id") != post_id:
+                continue
+
+            cid = hit.get("objectID")
+            created_at = hit.get("created_at")
+            comments.append(
+                {
+                    "id": int(cid) if cid is not None and str(cid).isdigit() else cid,
+                    "post_url": post_url,
+                    "commenter": hit.get("author", ""),
+                    "date": created_at,
+                    "content": hit.get("comment_text", "") or "",
+                }
+            )
+
+        page = params.get("page", 0)
+        nb_pages = data.get("nbPages", 0)
+        if page >= nb_pages - 1:
+            break
+        params["page"] = page + 1
+
+    return comments
+
+
 def extract_post_id_from_url(url: str) -> Optional[int]:
     """Extract post ID from Hacker News URL."""
     match = ID_FROM_URL_PATTERN.search(url)
     if match:
         return int(match.group(1))
     return None
+
+
+def parse_iso8601(date_str: str) -> Optional[dt.datetime]:
+    """Parse ISO8601-ish strings safely to aware UTC datetimes."""
+
+    if not date_str:
+        return None
+    try:
+        return dt.datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _max_date_from_items(items: List[Dict], key: str) -> Optional[str]:
+    """Return max ISO date string from items[key] values (if parseable)."""
+
+    max_dt = None
+    for item in items:
+        dt_obj = parse_iso8601(item.get(key, ""))
+        if dt_obj and (max_dt is None or dt_obj > max_dt):
+            max_dt = dt_obj
+    return max_dt.isoformat() if max_dt else None
+
+
+def normalize_cache_shape(data: Dict, kind: str) -> Dict:
+    """Ensure cache has {items, metadata}; auto-migrate legacy list shape."""
+
+    if isinstance(data, list):
+        items = data
+        metadata: Dict[str, Optional[str]] = {}
+    elif isinstance(data, dict):
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+    else:
+        items = []
+        metadata = {}
+
+    # Derive last_synced_at if missing
+    if metadata.get("last_synced_at") is None:
+        if kind == "comments":
+            derived = _max_date_from_items(items, "date")
+        elif kind == "posts":
+            derived = _max_date_from_items(items, "created_at")
+        else:
+            derived = None
+        metadata["last_synced_at"] = derived or DEFAULT_LAST_SYNC
+
+    metadata.setdefault("schema_version", SCHEMA_VERSION)
+
+    return {"items": items, "metadata": metadata}
+
+
+def load_cache(path: Path, kind: str) -> Dict:
+    """Load cache file, migrating legacy list shape in-memory if needed."""
+
+    if not path.exists():
+        return {
+            "items": [],
+            "metadata": {
+                "last_synced_at": DEFAULT_LAST_SYNC,
+                "schema_version": SCHEMA_VERSION,
+            },
+        }
+
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    return normalize_cache_shape(raw, kind)
+
+
+def migrate_cache_file(path: Path, kind: str) -> None:
+    """If cache is legacy list, rewrite to {items, metadata} schema."""
+
+    if not path.exists():
+        return
+
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    migrated = normalize_cache_shape(raw, kind)
+
+    # Only rewrite if structure changed or metadata/schema_version missing
+    needs_write = not isinstance(raw, dict) or "items" not in raw or "metadata" not in raw
+    if isinstance(raw, dict):
+        meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        if meta.get("schema_version") != SCHEMA_VERSION:
+            needs_write = True
+
+    if needs_write:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(migrated, f, indent=2, ensure_ascii=False)
+
+
+def write_cache(cache: Dict, output_path: Path) -> None:
+    """Persist cache ensuring metadata defaults are present."""
+
+    cache = normalize_cache_shape(cache, "comments" if "comments" in output_path.name else "posts")
+    cache["metadata"].setdefault("last_synced_at", dt.datetime.now(dt.timezone.utc).isoformat())
+    cache["metadata"]["schema_version"] = SCHEMA_VERSION
+
+    write_json(cache, str(output_path))
 
 
 def read_posts_json(json_path: str) -> List[Dict]:
@@ -333,8 +496,8 @@ def read_posts_json(json_path: str) -> List[Dict]:
         with open(path_obj, "r", encoding="utf-8", newline="") as csvfile:
             return list(csv.DictReader(csvfile))
 
-    with open(path_obj, "r", encoding="utf-8") as jsonfile:
-        posts = json.load(jsonfile)
+    cache = load_cache(path_obj, "posts")
+    posts = cache.get("items", [])
     if not isinstance(posts, list):
         raise ValueError(f"Expected a list of posts in {json_path}")
     return posts
@@ -344,10 +507,32 @@ def fetch_comments_from_posts(
     posts_path: str,
     max_comments_per_post: Optional[int] = None,
     max_comments_total: Optional[int] = None,
-) -> List[Dict]:
-    """Fetch all comments from posts listed in JSON file."""
+    existing_cache_path: Optional[str] = None,
+    refresh_cache: bool = False,
+) -> Tuple[Dict, int]:
+    """Fetch all comments from posts listed in JSON file and return cache dict plus new count."""
     posts = read_posts_json(posts_path)
-    all_comments = []
+    existing_cache = (
+        {"items": [], "metadata": {"last_synced_at": None}}
+        if refresh_cache
+        else load_cache(Path(existing_cache_path or ""), "comments")
+        if existing_cache_path
+        else {"items": [], "metadata": {"last_synced_at": None}}
+    )
+    existing_comments = existing_cache.get("items", [])
+    existing_ids = {str(c.get("id")) for c in existing_comments if c.get("id") is not None}
+
+    last_synced_at = parse_iso8601(existing_cache.get("metadata", {}).get("last_synced_at"))
+    if last_synced_at is None:
+        inferred = _max_date_from_items(existing_comments, "date")
+        last_synced_at = parse_iso8601(inferred) if inferred else None
+
+    print(
+        "Incremental comment fetch:",
+        f"found {len(existing_comments)} existing; last_synced_at={last_synced_at.isoformat() if last_synced_at else 'none'}",
+    )
+
+    new_comments: List[Dict] = []
     global_counter = [0]
 
     for i, post in enumerate(posts, 1):
@@ -361,25 +546,48 @@ def fetch_comments_from_posts(
         print(
             f"Fetching comments for post {i}/{len(posts)}: {post.get('title', 'Unknown')} (ID: {post_id})"
         )
-        post_comments = []
-        fetch_all_comments(
-            post_id,
-            post_url,
-            post_comments,
-            max_comments_per_post=max_comments_per_post,
-            global_counter=global_counter,
-            max_comments_total=max_comments_total,
-        )
-        all_comments.extend(post_comments)
+
+        post_comments = fetch_new_comments_algolia(post_id, post_url, last_synced_at)
+
+        # Respect optional limits (mainly for tests)
+        if max_comments_per_post is not None:
+            post_comments = post_comments[:max_comments_per_post]
+
+        for c in post_comments:
+            if max_comments_total is not None and global_counter[0] >= max_comments_total:
+                break
+
+            cid = str(c.get("id")) if c.get("id") is not None else None
+            if cid and cid in existing_ids:
+                continue
+
+            new_comments.append(c)
+            existing_ids.add(cid or "")
+            global_counter[0] += 1
+
         print(
-            f"  Found {len(post_comments)} comments (total so far: {len(all_comments)})"
+            f"  Found {len(post_comments)} new top-level comments (total new so far: {len(new_comments)})"
         )
 
         if max_comments_total is not None and global_counter[0] >= max_comments_total:
             print("Reached max comment limit; stopping early.")
             break
 
-    return all_comments
+    merged_comments = existing_comments + new_comments
+    merged_comments.sort(
+        key=lambda c: parse_iso8601(c.get("date", ""))
+        or dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+    )
+
+    merged_cache = {
+        "items": merged_comments,
+        "metadata": {
+            "last_synced_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "schema_version": SCHEMA_VERSION,
+        },
+    }
+
+    return merged_cache, len(new_comments)
 
 
 def write_json(data: List[Dict], output_path: str) -> None:
@@ -566,8 +774,8 @@ def search_engineering_management_roles(
     """
     # Load comments
     print(f"Loading comments from {comments_path}...")
-    with open(comments_path, "r", encoding="utf-8") as f:
-        comments = json.load(f)
+    comments_cache = load_cache(Path(comments_path), "comments")
+    comments = comments_cache.get("items", [])
 
     print(f"Loaded {len(comments)} comments")
 
@@ -626,6 +834,7 @@ def search_engineering_management_roles(
 
                 match_dict = {
                     "comment_index": idx,
+                    "comment_id": comment.get("id"),
                     "post_url": comment.get("post_url", ""),
                     "commenter": comment.get("commenter", ""),
                     "date": comment.get("date", ""),
@@ -637,8 +846,11 @@ def search_engineering_management_roles(
 
                 # Extract structured data using LLM if enabled
                 if extract_with_llm and client:
+                    comment_id = match_dict.get("comment_id")
                     if len(matches) % 10 == 0 and len(matches) > 0:
-                        print(f"  Extracting data for match {len(matches)}...")
+                        print(
+                            f"  Extracting data for match {len(matches)} (comment {comment_id or 'n/a'})..."
+                        )
                     extracted = extract_job_info_with_llm(
                         decoded_content, client, matched_text=match.group(0)
                     )
@@ -670,18 +882,28 @@ def search_engineering_management_roles(
     return matches
 
 
-def extract_from_matches(input_path: str, output_path: str) -> None:
+def extract_from_matches(input_path: str, output_path: str, reextract: bool = False) -> None:
     """Read matches from JSON file and add extracted data to each match.
 
     Args:
         input_path: Path to input JSON file with matches
         output_path: Path to write output JSON file with extracted data
+        reextract: Force rerun extraction even if match already has extracted data
     """
     print(f"Loading matches from {input_path}...")
     with open(input_path, "r", encoding="utf-8") as f:
         matches = json.load(f)
 
     print(f"Loaded {len(matches)} matches")
+    already_extracted = sum(
+        1
+        for m in matches
+        if m.get("extracted") and not m.get("extracted", {}).get("extraction_error")
+    )
+    pending = len(matches) - already_extracted
+    print(
+        f"Extraction status: {already_extracted} already extracted, {pending} pending (use --reextract to force)."
+    )
 
     # Initialize OpenAI client
     if OpenAI is None:
@@ -700,12 +922,23 @@ def extract_from_matches(input_path: str, output_path: str) -> None:
 
     # Extract data for each match
     for idx, match in enumerate(matches, 1):
+        if not reextract:
+            existing = match.get("extracted")
+            if existing and not existing.get("extraction_error"):
+                print(
+                    f"Match {idx}/{len(matches)} already extracted; skipping (use --reextract to force)."
+                )
+                continue
+
         full_content = match.get("full_content", "")
         if not full_content:
             print(f"Match {idx}/{len(matches)}: No full_content, skipping")
             continue
 
-        print(f"Extracting data for match {idx}/{len(matches)}...")
+        comment_id = match.get("comment_id")
+        print(
+            f"Extracting data for match {idx}/{len(matches)} (comment {comment_id or 'n/a'})..."
+        )
         matched_text = match.get("matched_text", None)
         extracted = extract_job_info_with_llm(
             full_content, client, matched_text=matched_text
@@ -836,7 +1069,7 @@ def generate_html_report(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch 'Ask HN: Who is hiring?' threads and save them to JSON, or fetch comments from posts, or search for engineering management roles, or extract structured data from matches, or generate an HTML report."
+    description="Fetch 'Ask HN: Who is hiring?' threads and save them to JSON, or fetch comments from posts, or search for roles using a profile, or extract structured data from matches, or generate an HTML report."
     )
     parser.add_argument(
         "--fetch-comments",
@@ -844,9 +1077,11 @@ def parse_args() -> argparse.Namespace:
         help="Mode: fetch comments from posts in JSON file instead of fetching post URLs.",
     )
     parser.add_argument(
-        "--search-eng-management",
+        "--search",
         action="store_true",
-        help="Mode: search comments for engineering management roles (Head of Eng, VP Eng, Director of Engineering, etc.).",
+        help=(
+            "Mode: search comments for roles using regex patterns defined in a profile (default profile: engineering_management)."
+        ),
     )
     parser.add_argument(
         "--profile",
@@ -870,7 +1105,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-extract",
         action="store_true",
-        help="Skip LLM-based extraction of structured data (faster, but no extracted fields). Only used with --search-eng-management.",
+        help="Skip LLM-based extraction of structured data (faster, but no extracted fields). Only used with --search.",
     )
     parser.add_argument(
         "--max-posts",
@@ -896,6 +1131,11 @@ def parse_args() -> argparse.Namespace:
         "--max-matches",
         type=int,
         help="Limit number of matches processed (for tests)",
+    )
+    parser.add_argument(
+        "--reextract",
+        action="store_true",
+        help="Force rerunning LLM extraction even if matches already contain extracted data.",
     )
     parser.add_argument(
         "--input",
@@ -932,6 +1172,10 @@ def main() -> None:
         )
         sys.exit(1)
 
+    # Auto-migrate default caches to new schema when present
+    migrate_cache_file(DEFAULT_POSTS_PATH, "posts")
+    migrate_cache_file(DEFAULT_COMMENTS_PATH, "comments")
+
     slug = profile_slug(args.profile)
     default_matches_path = OUT_DIR / slug / "matches.json"
     default_matches_with_extraction_path = (
@@ -959,9 +1203,9 @@ def main() -> None:
             )
             output_path = str(default_matches_with_extraction_path)
 
-        extract_from_matches(input_path, output_path)
-    elif args.search_eng_management:
-        # Mode 3: Search for engineering management roles
+        extract_from_matches(input_path, output_path, reextract=args.reextract)
+    elif args.search:
+        # Mode 3: Search comments for roles using a profile
         input_path = args.input or str(DEFAULT_COMMENTS_PATH)
         output_path = args.output or str(default_matches_path)
         profile_arg = args.profile
@@ -993,33 +1237,31 @@ def main() -> None:
         output_path = args.output or str(DEFAULT_COMMENTS_PATH)
         output_path_obj = Path(output_path)
 
-        if output_path_obj.exists() and not args.refresh_cache:
-            print(
-                f"Found existing comments at {output_path_obj}; skipping download. Use --refresh-cache to regenerate."
-            )
-            return
+        # Migrate any legacy cache shape before reading
+        migrate_cache_file(Path(input_path), "posts")
+        if output_path_obj.exists():
+            migrate_cache_file(output_path_obj, "comments")
 
         if not Path(input_path).exists():
             print(f"Error: Posts file not found: {input_path}")
             return
 
-        comments = fetch_comments_from_posts(
+        comments_cache, new_count = fetch_comments_from_posts(
             input_path,
             max_comments_per_post=args.comments_per_post,
             max_comments_total=args.max_comments_total,
+            existing_cache_path=output_path if output_path_obj.exists() else None,
+            refresh_cache=args.refresh_cache,
         )
-        write_json(comments, output_path)
-        print(f"\nWrote {len(comments)} comments to {output_path}")
+        write_cache(comments_cache, output_path_obj)
+        total = len(comments_cache.get("items", []))
+        print(
+            f"\nSaved {total} comments to {output_path} (added {new_count}, unchanged {total - new_count})."
+        )
     else:
         # Mode 1: Fetch post URLs (original functionality)
         output_path = args.output or str(DEFAULT_POSTS_OUTPUT)
         output_path_obj = Path(output_path)
-
-        if output_path_obj.exists() and not args.refresh_cache:
-            print(
-                f"Found existing posts at {output_path_obj}; skipping download. Use --refresh-cache to re-download."
-            )
-            return
 
         if args.post_id:
             post_item = fetch_hn_item(args.post_id)
