@@ -1,4 +1,4 @@
-"""Fetch recent 'Ask HN: Who is hiring?' threads and save them to JSON.
+"""Fetch recent 'Ask HN: Who is hiring?' posts and save them to JSON.
 
 Run with: python who_is_hiring.py --months 6 --output posts.json
 Or fetch comments: python who_is_hiring.py --fetch-comments --input posts.json --output out/comments.json
@@ -36,7 +36,7 @@ except ImportError:
 
 SEARCH_URL = "https://hn.algolia.com/api/v1/search_by_date"
 HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
-# Match the canonical monthly thread titles like "Ask HN: Who is hiring? (November 2025)"
+# Match the canonical monthly post titles like "Ask HN: Who is hiring? (November 2025)"
 TITLE_PATTERN = re.compile(r"^ask hn: who is hiring\?\s*\(.*\)", re.IGNORECASE)
 # Extract post ID from HN URL
 ID_FROM_URL_PATTERN = re.compile(r"id=(\d+)")
@@ -125,16 +125,16 @@ def sanitize_full_content(content: str) -> str:
     return sanitized.replace("\n", "<br>")
 
 
-def fetch_who_is_hiring_threads(
+def fetch_who_is_hiring_posts(
     since: dt.datetime, max_posts: Optional[int] = None
 ) -> List[Dict]:
-    """Return threads matching the title pattern since the given UTC datetime.
+    """Return posts matching the title pattern since the given UTC datetime.
 
-    max_posts can be used to cap how many recent threads are returned (for tests).
+    max_posts can be used to cap how many recent posts are returned (for tests).
     """
     since_ts = int(since.timestamp())
     page = 0
-    threads: List[Dict] = []
+    posts: List[Dict] = []
     seen_ids = set()
 
     while True:
@@ -164,7 +164,7 @@ def fetch_who_is_hiring_threads(
 
             created_at = hit.get("created_at")
             url = hit.get("url") or f"https://news.ycombinator.com/item?id={hn_id}"
-            threads.append(
+            posts.append(
                 {
                     "id": hn_id,
                     "title": title,
@@ -180,12 +180,12 @@ def fetch_who_is_hiring_threads(
             break
         page += 1
 
-    threads = sorted(threads, key=lambda t: t["created_at"], reverse=True)
+    posts = sorted(posts, key=lambda t: t["created_at"], reverse=True)
 
     if max_posts is not None:
-        threads = threads[:max_posts]
+        posts = posts[:max_posts]
 
-    return threads
+    return posts
 
 
 def write_posts_json(rows: Iterable[Dict], output_path: str) -> None:
@@ -248,6 +248,7 @@ def fetch_comment_and_replies(
         return
 
     # Extract comment data
+    cid = comment_item.get("id")
     commenter = comment_item.get("by", "")
     time_ts = comment_item.get("time", 0)
     # Convert Unix timestamp to ISO format
@@ -257,6 +258,7 @@ def fetch_comment_and_replies(
     # Add comment to list
     comments.append(
         {
+            "id": str(cid) if cid is not None else None,
             "post_url": post_url,
             "commenter": commenter,
             "date": comment_date,
@@ -360,10 +362,11 @@ def fetch_new_comments_algolia(
                 continue
 
             cid = hit.get("objectID")
+            cid_str = str(cid) if cid is not None else None
             created_at = hit.get("created_at")
             comments.append(
                 {
-                    "id": int(cid) if cid is not None and str(cid).isdigit() else cid,
+                    "id": cid_str,
                     "post_url": post_url,
                     "commenter": hit.get("author", ""),
                     "date": created_at,
@@ -418,7 +421,9 @@ def normalize_cache_shape(data: Dict, kind: str) -> Dict:
         metadata: Dict[str, Optional[str]] = {}
     elif isinstance(data, dict):
         items = data.get("items") if isinstance(data.get("items"), list) else []
-        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        metadata = (
+            data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        )
     else:
         items = []
         metadata = {}
@@ -468,7 +473,9 @@ def migrate_cache_file(path: Path, kind: str) -> None:
     migrated = normalize_cache_shape(raw, kind)
 
     # Only rewrite if structure changed or metadata/schema_version missing
-    needs_write = not isinstance(raw, dict) or "items" not in raw or "metadata" not in raw
+    needs_write = (
+        not isinstance(raw, dict) or "items" not in raw or "metadata" not in raw
+    )
     if isinstance(raw, dict):
         meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
         if meta.get("schema_version") != SCHEMA_VERSION:
@@ -482,8 +489,12 @@ def migrate_cache_file(path: Path, kind: str) -> None:
 def write_cache(cache: Dict, output_path: Path) -> None:
     """Persist cache ensuring metadata defaults are present."""
 
-    cache = normalize_cache_shape(cache, "comments" if "comments" in output_path.name else "posts")
-    cache["metadata"].setdefault("last_synced_at", dt.datetime.now(dt.timezone.utc).isoformat())
+    cache = normalize_cache_shape(
+        cache, "comments" if "comments" in output_path.name else "posts"
+    )
+    cache["metadata"].setdefault(
+        "last_synced_at", dt.datetime.now(dt.timezone.utc).isoformat()
+    )
     cache["metadata"]["schema_version"] = SCHEMA_VERSION
 
     write_json(cache, str(output_path))
@@ -515,14 +526,20 @@ def fetch_comments_from_posts(
     existing_cache = (
         {"items": [], "metadata": {"last_synced_at": None}}
         if refresh_cache
-        else load_cache(Path(existing_cache_path or ""), "comments")
-        if existing_cache_path
-        else {"items": [], "metadata": {"last_synced_at": None}}
+        else (
+            load_cache(Path(existing_cache_path or ""), "comments")
+            if existing_cache_path
+            else {"items": [], "metadata": {"last_synced_at": None}}
+        )
     )
     existing_comments = existing_cache.get("items", [])
-    existing_ids = {str(c.get("id")) for c in existing_comments if c.get("id") is not None}
+    existing_ids = {
+        str(c.get("id")) for c in existing_comments if c.get("id") is not None
+    }
 
-    last_synced_at = parse_iso8601(existing_cache.get("metadata", {}).get("last_synced_at"))
+    last_synced_at = parse_iso8601(
+        existing_cache.get("metadata", {}).get("last_synced_at")
+    )
     if last_synced_at is None:
         inferred = _max_date_from_items(existing_comments, "date")
         last_synced_at = parse_iso8601(inferred) if inferred else None
@@ -554,7 +571,10 @@ def fetch_comments_from_posts(
             post_comments = post_comments[:max_comments_per_post]
 
         for c in post_comments:
-            if max_comments_total is not None and global_counter[0] >= max_comments_total:
+            if (
+                max_comments_total is not None
+                and global_counter[0] >= max_comments_total
+            ):
                 break
 
             cid = str(c.get("id")) if c.get("id") is not None else None
@@ -722,6 +742,45 @@ Return JSON only, no markdown formatting, no explanations."""
         }
 
 
+def build_match_key(
+    comment_id: Optional[str],
+    matched_text: Optional[str],
+) -> Optional[str]:
+    """Return the dedupe key for a match: comment ID only."""
+
+    if comment_id is None:
+        return None
+    cid = str(comment_id).strip()
+    return cid or None
+
+
+def load_existing_extractions(path: Path) -> Dict[str, Dict]:
+    """Load prior extractions keyed by comment+match, skipping errored entries."""
+
+    if not path.exists():
+        return {}
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            existing_matches = json.load(f)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Warning: could not read existing extractions from {path}: {exc}")
+        return {}
+
+    keyed: Dict[str, Dict] = {}
+    if not isinstance(existing_matches, list):
+        return keyed
+
+    for entry in existing_matches:
+        key = build_match_key(entry.get("comment_id"), entry.get("matched_text"))
+        if not key:
+            continue
+        extracted = entry.get("extracted") or {}
+        if extracted and not extracted.get("extraction_error"):
+            keyed[key] = extracted
+    return keyed
+
+
 def compile_patterns_from_profile(profile_path: Path) -> List[Tuple[re.Pattern, str]]:
     """Compile regex patterns for role search from a YAML profile."""
     if not profile_path.exists():
@@ -761,6 +820,7 @@ def search_engineering_management_roles(
     extract_with_llm: bool = True,
     profile_path: Optional[str] = None,
     max_matches: Optional[int] = None,
+    existing_extracted_path: Optional[str] = None,
 ) -> List[Dict]:
     """Search comments for engineering management role postings.
 
@@ -768,6 +828,7 @@ def search_engineering_management_roles(
         comments_path: Path to JSON file containing comments
         extract_with_llm: Whether to extract structured data using LLM (default: True)
         profile_path: Path to YAML profile defining regex patterns (default: engineering management profile)
+        existing_extracted_path: Path to a matches_with_extraction.json used to reuse prior extractions
 
     Returns:
         List of match dictionaries with comment info and matched text
@@ -802,6 +863,14 @@ def search_engineering_management_roles(
             else:
                 client = OpenAI(api_key=api_key)
                 print(f"LLM extraction enabled (using {DEFAULT_OPENAI_MODEL})")
+
+    existing_extractions: Dict[str, Dict] = {}
+    if existing_extracted_path:
+        existing_extractions = load_existing_extractions(Path(existing_extracted_path))
+        if existing_extractions:
+            print(
+                f"Reusing {len(existing_extractions)} existing extractions from {existing_extracted_path}"
+            )
 
     matches = []
 
@@ -846,17 +915,25 @@ def search_engineering_management_roles(
 
                 # Extract structured data using LLM if enabled
                 if extract_with_llm and client:
-                    comment_id = match_dict.get("comment_id")
-                    if len(matches) % 10 == 0 and len(matches) > 0:
-                        print(
-                            f"  Extracting data for match {len(matches)} (comment {comment_id or 'n/a'})..."
-                        )
-                    extracted = extract_job_info_with_llm(
-                        decoded_content, client, matched_text=match.group(0)
+                    key = build_match_key(
+                        match_dict.get("comment_id"), match_dict.get("matched_text")
                     )
-                    match_dict["extracted"] = extracted
-                    # Small delay to avoid rate limits (can be removed if using batch processing)
-                    time.sleep(0.1)
+                    reused = False
+                    if key and key in existing_extractions:
+                        match_dict["extracted"] = existing_extractions[key]
+                        reused = True
+                    if not reused:
+                        comment_id = match_dict.get("comment_id")
+                        if len(matches) % 10 == 0 and len(matches) > 0:
+                            print(
+                                f"  Extracting data for match {len(matches)} (comment {comment_id or 'n/a'})..."
+                            )
+                        extracted = extract_job_info_with_llm(
+                            decoded_content, client, matched_text=match.group(0)
+                        )
+                        match_dict["extracted"] = extracted
+                        # Small delay to avoid rate limits (can be removed if using batch processing)
+                        time.sleep(0.1)
 
                 matches.append(match_dict)
                 # Only record first match per pattern per comment to avoid duplicates
@@ -882,7 +959,9 @@ def search_engineering_management_roles(
     return matches
 
 
-def extract_from_matches(input_path: str, output_path: str, reextract: bool = False) -> None:
+def extract_from_matches(
+    input_path: str, output_path: str, reextract: bool = False
+) -> None:
     """Read matches from JSON file and add extracted data to each match.
 
     Args:
@@ -905,6 +984,15 @@ def extract_from_matches(input_path: str, output_path: str, reextract: bool = Fa
         f"Extraction status: {already_extracted} already extracted, {pending} pending (use --reextract to force)."
     )
 
+    existing_extractions: Dict[str, Dict] = {}
+    output_path_obj = Path(output_path)
+    if output_path_obj.exists() and not reextract:
+        existing_extractions = load_existing_extractions(output_path_obj)
+        if existing_extractions:
+            print(
+                f"Reusing {len(existing_extractions)} existing extractions from {output_path_obj}"
+            )
+
     # Initialize OpenAI client
     if OpenAI is None:
         print("Error: OpenAI library not installed. Install with: pip install openai")
@@ -923,6 +1011,13 @@ def extract_from_matches(input_path: str, output_path: str, reextract: bool = Fa
     # Extract data for each match
     for idx, match in enumerate(matches, 1):
         if not reextract:
+            key = build_match_key(match.get("comment_id"), match.get("matched_text"))
+            if key and key in existing_extractions:
+                match["extracted"] = existing_extractions[key]
+                print(
+                    f"Match {idx}/{len(matches)} already extracted in {output_path_obj}; skipping (use --reextract to force)."
+                )
+                continue
             existing = match.get("extracted")
             if existing and not existing.get("extraction_error"):
                 print(
@@ -1069,7 +1164,7 @@ def generate_html_report(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-    description="Fetch 'Ask HN: Who is hiring?' threads and save them to JSON, or fetch comments from posts, or search for roles using a profile, or extract structured data from matches, or generate an HTML report."
+        description="Fetch 'Ask HN: Who is hiring?' posts and save them to JSON, or fetch comments from posts, or search for roles using a profile, or extract structured data from matches, or generate an HTML report."
     )
     parser.add_argument(
         "--fetch-comments",
@@ -1209,6 +1304,7 @@ def main() -> None:
         input_path = args.input or str(DEFAULT_COMMENTS_PATH)
         output_path = args.output or str(default_matches_path)
         profile_arg = args.profile
+        output_path_obj = Path(output_path)
 
         if profile_arg:
             profile_path_obj = Path(profile_arg)
@@ -1221,23 +1317,29 @@ def main() -> None:
                     if available
                     else "No profiles found in profiles/"
                 )
-                print(
-                    f"Error: Profile file not found: {profile_arg}. {available_msg}"
-                )
+                print(f"Error: Profile file not found: {profile_arg}. {available_msg}")
                 sys.exit(1)
 
         # Safety check: don't overwrite comments.json
-        if Path(output_path).name == "comments.json":
+        if output_path_obj.name == "comments.json":
             print(
                 "Error: Cannot write to comments.json (protected file). Using matches.json instead."
             )
-            output_path = str(DEFAULT_MATCHES_PATH)
+            output_path_obj = default_matches_path
+            output_path = str(default_matches_path)
+
+        existing_extracted_path = (
+            output_path_obj.with_name("matches_with_extraction.json")
+            if args.output
+            else default_matches_with_extraction_path
+        )
 
         matches = search_engineering_management_roles(
             input_path,
             extract_with_llm=not args.no_extract,
             profile_path=profile_arg,
             max_matches=args.max_matches,
+            existing_extracted_path=str(existing_extracted_path),
         )
         write_json(matches, output_path)
         print(f"\nWrote {len(matches)} matches to {output_path}")
@@ -1288,7 +1390,7 @@ def main() -> None:
             created_at = dt.datetime.fromtimestamp(
                 post_item.get("time", 0), tz=dt.timezone.utc
             ).isoformat()
-            threads = [
+            posts = [
                 {
                     "id": str(post_item.get("id", "")),
                     "title": title,
@@ -1303,9 +1405,9 @@ def main() -> None:
             since_date = dt.datetime.now(dt.timezone.utc) - dt.timedelta(
                 days=31 * args.months
             )
-            threads = fetch_who_is_hiring_threads(since_date, max_posts=args.max_posts)
-        write_posts_json(threads, output_path)
-        print(f"Wrote {len(threads)} threads to {output_path}")
+            posts = fetch_who_is_hiring_posts(since_date, max_posts=args.max_posts)
+        write_posts_json(posts, output_path)
+        print(f"Wrote {len(posts)} posts to {output_path}")
 
 
 if __name__ == "__main__":
