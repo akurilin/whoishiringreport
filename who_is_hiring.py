@@ -1213,7 +1213,17 @@ def main() -> None:
         if profile_arg:
             profile_path_obj = Path(profile_arg)
             if not profile_path_obj.exists():
-                print(f"Error: Profile file not found: {profile_arg}")
+                available = sorted(
+                    p.name for p in (BASE_DIR / "profiles").glob("*.yaml")
+                )
+                available_msg = (
+                    "Available profiles: " + ", ".join(available)
+                    if available
+                    else "No profiles found in profiles/"
+                )
+                print(
+                    f"Error: Profile file not found: {profile_arg}. {available_msg}"
+                )
                 sys.exit(1)
 
         # Safety check: don't overwrite comments.json
