@@ -1,7 +1,7 @@
-import os
 import json
-from pathlib import Path
+import os
 import subprocess
+from pathlib import Path
 
 import pytest
 from dotenv import load_dotenv
@@ -17,7 +17,6 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
     out_dir = Path(os.getenv("TEST_OUT", repo_root / "out" / "test"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    posts_path = out_dir / "posts.json"
     comments_path = out_dir / "comments.json"
     matches_path = out_dir / "matches.json"
     extracted_path = out_dir / "matches_with_extraction.json"
@@ -25,10 +24,10 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
 
     python_bin = Path(os.getenv("PYTHON_BIN", repo_root / ".venv" / "bin" / "python"))
 
-    def run_cmd(args):
+    def run_cmd(script: str, args: list):
         # Run the script as a black box via CLI.
         result = subprocess.run(
-            [str(python_bin), "who_is_hiring.py", *args],
+            [str(python_bin), script, *args],
             cwd=repo_root,
             env=os.environ.copy(),
             capture_output=True,
@@ -36,36 +35,30 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
         )
         if result.returncode != 0:
             raise AssertionError(
-                f"Command failed: {' '.join(args)}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+                f"Command failed: {script} {' '.join(args)}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
             )
         return result
 
     # Use a deterministic test post with early UX/design hits (Nov 2025 thread).
     test_post_id = "45800465"
 
-    # 1) Fetch posts (one only, or a specific ID).
-    post_args = ["--output", str(posts_path), "--refresh-cache"]
-    post_args.extend(["--post-id", str(test_post_id)])
-    run_cmd(post_args)
-
-    # 2) Fetch comments with caps.
+    # 1) Sync comments using sync_comments.py
     run_cmd(
+        "sync_comments.py",
         [
-            "--fetch-comments",
-            "--input",
-            str(posts_path),
+            "--post-id",
+            str(test_post_id),
+            "--max-comments",
+            "10",
             "--output",
             str(comments_path),
-            "--refresh-cache",
-            "--comments-per-post",
-            "10",
-            "--max-comments-total",
-            "10",
-        ]
+            "--refresh",
+        ],
     )
 
-    # 3) Search matches with extraction capped.
+    # 2) Search matches with extraction capped.
     run_cmd(
+        "who_is_hiring.py",
         [
             "--search",
             "--profile",
@@ -76,22 +69,24 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
             str(matches_path),
             "--max-matches",
             "10",
-        ]
+        ],
     )
 
-    # 4) Extract (idempotent but forces the CLI path).
+    # 3) Extract (idempotent but forces the CLI path).
     run_cmd(
+        "who_is_hiring.py",
         [
             "--extract-from-matches",
             "--input",
             str(matches_path),
             "--output",
             str(extracted_path),
-        ]
+        ],
     )
 
-    # 5) Generate HTML.
+    # 4) Generate HTML.
     run_cmd(
+        "who_is_hiring.py",
         [
             "--generate-html",
             "--input",
@@ -99,17 +94,13 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
             "--output",
             str(report_path),
             "--no-open-report",
-        ]
+        ],
     )
 
     # Validations (black-box outputs).
-    with open(posts_path, encoding="utf-8") as f:
-        posts_cache = json.load(f)
-    posts = posts_cache["items"] if isinstance(posts_cache, dict) else posts_cache
-    assert len(posts) == 1, f"Expected 1 post, got {len(posts)}"
-
     with open(comments_path, encoding="utf-8") as f:
-        comments = json.load(f)
+        comments_cache = json.load(f)
+    comments = comments_cache.get("items", [])
     assert comments, "No comments fetched"
     assert len(comments) <= 10, f"Expected <=10 comments, got {len(comments)}"
 
@@ -122,9 +113,9 @@ def test_end_to_end_smoke(tmp_path: Path) -> None:
     for i, match in enumerate(extracted_matches, 1):
         extracted = match.get("extracted") or {}
         assert extracted, f"Match {i} missing extraction payload"
-        assert not extracted.get(
-            "extraction_error"
-        ), f"Match {i} has extraction_error: {extracted['extraction_error']}"
+        assert not extracted.get("extraction_error"), (
+            f"Match {i} has extraction_error: {extracted['extraction_error']}"
+        )
 
     assert report_path.is_file(), "Report was not generated"
     assert report_path.stat().st_size > 0, "Report is empty"
