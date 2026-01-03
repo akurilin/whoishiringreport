@@ -16,6 +16,7 @@
         .btn-hn:hover { background: #e65a00; }
         .data-row { cursor: pointer; }
         .cell-text { cursor: text; }
+        a.cell-text { cursor: pointer; }
         .detail-content { max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.25s ease; }
         .detail-accent::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: #4f46e5; }
         .detail-box { padding: 16px; }
@@ -71,13 +72,13 @@
                 <thead class="bg-indigo-600 text-white sticky top-0 z-10">
                     <tr>
                         <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(0)">Company</th>
-                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(1)">Role</th>
-                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(2)">Location</th>
-                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(3)">Remote</th>
-                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(4)">Type</th>
-                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(5)">Compensation</th>
-                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(6)">Equity</th>
-                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(7)">Commenter</th>
+                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(1)">Stage</th>
+                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(2)">Role</th>
+                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(3)">Location</th>
+                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(4)">Remote</th>
+                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(5)">Type</th>
+                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(6)">Compensation</th>
+                        <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(7)">Equity</th>
                         <th class="sortable whitespace-nowrap px-4 py-3 text-left font-semibold cursor-pointer" onclick="sortTable(8)">Date</th>
                         <th class="whitespace-nowrap px-4 py-3 text-left font-semibold">Actions</th>
                     </tr>
@@ -85,17 +86,26 @@
                 <tbody id="table-body" class="divide-y divide-slate-200">
                     {% for row in rows %}
                     <tr id="{{ row.row_id }}" class="data-row" data-expanded="false">
-                        <td class="px-4 py-3 font-semibold text-slate-900"><span class="cell-text">{{ row.company | e }}</span></td>
+                        <td class="px-4 py-3 font-semibold text-slate-900">
+                            {% if row.company_url %}
+                            <a href="{{ row.company_url | e }}" target="_blank" class="cell-text text-indigo-600 hover:underline">{{ row.company | e }}</a>
+                            {% else %}
+                            <span class="cell-text">{{ row.company | e }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-slate-600"><span class="cell-text">{{ row.company_stage | e }}</span></td>
                         <td class="px-4 py-3 text-slate-800"><span class="cell-text">{{ row.role | e }}</span></td>
                         <td class="px-4 py-3 text-slate-600"><span class="cell-text">{{ row.location | e }}</span></td>
                         <td class="px-4 py-3 text-center"><span class="cell-text {{ row.remote_class | e }}">{{ row.remote | e }}</span></td>
                         <td class="px-4 py-3 text-slate-700"><span class="cell-text">{{ row.employment | e }}</span></td>
                         <td class="px-4 py-3 text-emerald-600 font-medium"><span class="cell-text">{{ row.cash_comp | e }}</span></td>
                         <td class="px-4 py-3 text-slate-700"><span class="cell-text">{{ row.equity | e }}</span></td>
-                        <td class="px-4 py-3 text-slate-700"><span class="cell-text">{{ row.commenter | e }}</span></td>
                         <td class="px-4 py-3 text-slate-600 whitespace-nowrap"><span class="cell-text">{{ row.date | e }}</span></td>
                         <td class="px-4 py-3">
                             <div class="flex gap-2">
+                                {% if row.apply_url %}
+                                <a href="{{ row.apply_url | e }}" target="_blank" class="link-btn inline-flex items-center px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">Apply</a>
+                                {% endif %}
                                 <a href="{{ row.post_url | e }}" target="_blank" class="link-btn inline-flex items-center px-3 py-2 rounded-md btn-hn text-white text-xs font-semibold">HN</a>
                             </div>
                         </td>
@@ -103,15 +113,9 @@
                     <tr id="{{ row.row_id }}-detail" class="detail-row bg-slate-50" style="display: none;">
                         <td colspan="10" class="relative p-0 detail-accent">
                             <div class="detail-content">
-                                <div class="detail-box space-y-4">
-                                    <div>
-                                        <h4 class="text-indigo-600 font-semibold mb-1">Matched Text:</h4>
-                                        <p class="matched-text inline-block px-3 py-1 rounded bg-slate-200 text-slate-800 font-semibold">{{ row.matched_text | e }}</p>
-                                    </div>
-                                    <div>
-                                        <h4 class="text-indigo-600 font-semibold mb-2">Full Content:</h4>
-                                        <div class="full-content leading-6 text-slate-900 whitespace-pre-wrap break-words">{{ row.full_content_html | safe }}</div>
-                                    </div>
+                                <div class="detail-box">
+                                    <h4 class="text-indigo-600 font-semibold mb-2">Full Content:</h4>
+                                    <div class="full-content leading-6 text-slate-900 whitespace-pre-wrap break-words">{{ row.full_content_html | safe }}</div>
                                 </div>
                             </div>
                         </td>
@@ -179,9 +183,9 @@
             allRows.forEach((row) => {
                 const cells = row.querySelectorAll('td');
                 const company = cells[0].textContent.toLowerCase();
-                const role = cells[1].textContent.toLowerCase();
-                const location = cells[2].textContent.toLowerCase();
-                const remote = cells[3].textContent.trim();
+                const role = cells[2].textContent.toLowerCase();
+                const location = cells[3].textContent.toLowerCase();
+                const remote = cells[4].textContent.trim();
                 const dateText = cells[8].textContent.trim();
                 const detailRow = document.getElementById(row.id + '-detail');
                 const isExpanded = row.dataset.expanded === 'true';
