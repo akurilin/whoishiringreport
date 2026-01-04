@@ -5,6 +5,8 @@ These tests validate that extraction:
 2. Handles one-to-many (multiple roles per comment)
 3. Extracts expected fields accurately
 
+Test cases are defined in fixtures/eval_cases.json for easy human review.
+
 Run with: pytest tests/test_extraction.py -v
 """
 
@@ -22,12 +24,18 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture(scope="module")
-def eval_comments() -> dict:
-    """Load the 3 golden test comments."""
-    fixture_path = Path(__file__).parent / "fixtures" / "eval_comments.json"
+# --- FIXTURES ---
+
+
+def load_eval_cases() -> list[dict]:
+    """Load all test cases from JSON fixture."""
+    fixture_path = Path(__file__).parent / "fixtures" / "eval_cases.json"
     with open(fixture_path, encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    return data["test_cases"]
+
+
+EVAL_CASES = load_eval_cases()
 
 
 @pytest.fixture(scope="module")
@@ -40,6 +48,199 @@ def instructor_client():
 
 # Model to use for tests - change this to compare different models
 TEST_MODEL = "gpt-4o-mini"
+
+
+# --- ASSERTION HELPERS ---
+
+
+def check_field_assertion(
+    actual_value, field_name: str, expected_value, role_context: str = ""
+):
+    """Check a single field assertion with operator support.
+
+    Operators (in field_name suffix):
+    - _contains: any item in expected list is substring of actual
+    - _gte: actual >= expected
+    - _lte: actual <= expected
+    - _in: actual is in expected list
+    - (none): exact match, or null check
+    """
+    ctx = f" for {role_context}" if role_context else ""
+
+    # Handle _contains operator (substring matching)
+    if field_name.endswith("_contains") or field_name.endswith("_contain"):
+        base_field = field_name.rsplit("_", 1)[0]
+        if actual_value is None:
+            raise AssertionError(
+                f"{base_field} is None, expected to contain {expected_value}{ctx}"
+            )
+
+        # actual_value could be a list (e.g., locations, remote_regions) or string
+        if isinstance(actual_value, list):
+            actual_str = " ".join(str(v) for v in actual_value)
+        else:
+            actual_str = str(actual_value)
+
+        # expected_value is a list of possible substrings (any match passes)
+        if not isinstance(expected_value, list):
+            expected_value = [expected_value]
+
+        if not any(substr in actual_str for substr in expected_value):
+            raise AssertionError(
+                f"{base_field} '{actual_str}' does not contain any of {expected_value}{ctx}"
+            )
+        return
+
+    # Handle _gte operator (greater than or equal)
+    if field_name.endswith("_gte"):
+        base_field = field_name[:-4]
+        if actual_value is None:
+            raise AssertionError(
+                f"{base_field} is None, expected >= {expected_value}{ctx}"
+            )
+        if actual_value < expected_value:
+            raise AssertionError(f"{base_field} {actual_value} < {expected_value}{ctx}")
+        return
+
+    # Handle _lte operator (less than or equal)
+    if field_name.endswith("_lte"):
+        base_field = field_name[:-4]
+        if actual_value is None:
+            raise AssertionError(
+                f"{base_field} is None, expected <= {expected_value}{ctx}"
+            )
+        if actual_value > expected_value:
+            raise AssertionError(f"{base_field} {actual_value} > {expected_value}{ctx}")
+        return
+
+    # Handle _in operator (actual is in expected list)
+    if field_name.endswith("_in"):
+        base_field = field_name[:-3]
+        if actual_value not in expected_value:
+            raise AssertionError(
+                f"{base_field} {actual_value} not in {expected_value}{ctx}"
+            )
+        return
+
+    # Exact match (including null checks)
+    if actual_value != expected_value:
+        raise AssertionError(
+            f"{field_name}: expected {expected_value}, got {actual_value}{ctx}"
+        )
+
+
+def get_role_field(role, field_name: str):
+    """Get a field value from a role, handling operator suffixes."""
+    # Strip operator suffixes to get base field name
+    base_field = field_name
+    for suffix in ("_contains", "_contain", "_gte", "_lte", "_in"):
+        if base_field.endswith(suffix):
+            base_field = base_field[: -len(suffix)]
+            break
+
+    # Handle nested access for enums
+    value = getattr(role, base_field, None)
+
+    # Convert enum to string value for comparison
+    if hasattr(value, "value"):
+        value = value.value
+
+    return value
+
+
+def find_matching_role(roles, match_by: dict):
+    """Find a role that matches the match_by criteria (order-agnostic).
+
+    Returns the matched role or None.
+    """
+    for role in roles:
+        matches = True
+        for field_name, expected in match_by.items():
+            actual = get_role_field(role, field_name)
+            try:
+                check_field_assertion(actual, field_name, expected)
+            except AssertionError:
+                matches = False
+                break
+        if matches:
+            return role
+    return None
+
+
+def assert_extraction_matches(result, error, expected: dict, case_name: str):
+    """Assert that extraction result matches expected schema.
+
+    Args:
+        result: CommentExtraction or None
+        error: ExtractionError or None
+        expected: Expected schema dict from JSON
+        case_name: Test case name for error messages
+    """
+    # Handle error cases
+    if expected.get("error"):
+        assert error is not None, f"[{case_name}] Expected an error but got none"
+        if "error_type_contains" in expected:
+            error_text = f"{error.error_type} {error.error_message}".lower()
+            assert expected["error_type_contains"].lower() in error_text, (
+                f"[{case_name}] Error should contain '{expected['error_type_contains']}', "
+                f"got: {error.error_type}: {error.error_message}"
+            )
+        return
+
+    # Non-error cases should have no error
+    assert error is None, f"[{case_name}] Unexpected error: {error}"
+    assert result is not None, f"[{case_name}] Result is None"
+
+    # Check is_job_posting
+    if "is_job_posting" in expected:
+        assert result.is_job_posting == expected["is_job_posting"], (
+            f"[{case_name}] is_job_posting: expected {expected['is_job_posting']}, "
+            f"got {result.is_job_posting}"
+        )
+
+    # Check role count
+    if "role_count" in expected:
+        assert len(result.roles) == expected["role_count"], (
+            f"[{case_name}] Expected {expected['role_count']} roles, got {len(result.roles)}"
+        )
+
+    if "role_count_min" in expected:
+        assert len(result.roles) >= expected["role_count_min"], (
+            f"[{case_name}] Expected at least {expected['role_count_min']} roles, "
+            f"got {len(result.roles)}"
+        )
+
+    # Check all_roles constraints (applies to every role)
+    if "all_roles" in expected:
+        for i, role in enumerate(result.roles):
+            role_ctx = f"role[{i}] ({role.role_title or 'untitled'})"
+            for field_name, expected_value in expected["all_roles"].items():
+                actual = get_role_field(role, field_name)
+                check_field_assertion(actual, field_name, expected_value, role_ctx)
+
+    # Check individual role expectations (order-agnostic matching)
+    if "roles" in expected:
+        for role_spec in expected["roles"]:
+            match_by = role_spec.get("match_by", {})
+            expect = role_spec.get("expect", {})
+
+            # Find matching role
+            matched_role = find_matching_role(result.roles, match_by)
+            match_desc = str(match_by)
+
+            assert matched_role is not None, (
+                f"[{case_name}] No role matched {match_desc}. "
+                f"Available roles: {[r.role_title for r in result.roles]}"
+            )
+
+            # Check expectations on matched role
+            role_ctx = f"role matching {match_desc}"
+            for field_name, expected_value in expect.items():
+                actual = get_role_field(matched_role, field_name)
+                check_field_assertion(actual, field_name, expected_value, role_ctx)
+
+
+# --- TIMED EXTRACTION ---
 
 
 def timed_extract(client, comment, model):
@@ -63,179 +264,17 @@ def timed_extract(client, comment, model):
     return result, error, elapsed
 
 
-class TestExtractionEval:
-    """Golden standard eval suite for extraction quality."""
-
-    def test_single_role_complete_data(self, eval_comments, instructor_client):
-        """Case 1: Neon Health - single role with full data.
-
-        Expected: 1 role with salary, location, remote, equity all present.
-        """
-        comment = eval_comments["44159535"]
-        result, error, elapsed = timed_extract(instructor_client, comment, TEST_MODEL)
-
-        assert error is None, f"Extraction failed: {error}"
-        assert result is not None
-        assert result.is_job_posting is True
-        assert len(result.roles) == 1
-
-        role = result.roles[0]
-        assert role.company_name == "Neon Health"
-        assert "Founding" in role.role_title or "Backend" in role.role_title
-        assert role.is_remote is True
-        assert any("North America" in r for r in role.remote_regions)
-        assert role.salary_min == 170000
-        assert role.salary_max == 225000
-        assert role.salary_currency == "USD"
-        # Equity mentioned but no specific amount -> should be null
-        assert role.equity is None
-        assert role.employment_type is not None
-        # Check the enum value, not the string representation
-        assert role.employment_type.value == "Full-time"
-
-    def test_multi_role_extraction(self, eval_comments, instructor_client):
-        """Case 2: SmarterDx - multiple roles from one comment.
-
-        Expected: 5+ distinct roles, all sharing company info.
-        Roles mentioned: Staff SWE, Senior SWE, ML Engineers, Engineering Manager,
-        Analytics Engineers, Senior Security Engineer
-        """
-        comment = eval_comments["44159539"]
-        result, error, elapsed = timed_extract(instructor_client, comment, TEST_MODEL)
-
-        assert error is None, f"Extraction failed: {error}"
-        assert result is not None
-        assert result.is_job_posting is True
-        assert len(result.roles) >= 5, (
-            f"Expected at least 5 roles, got {len(result.roles)}"
-        )
-
-        # Check role diversity
-        role_titles = [r.role_title.lower() for r in result.roles if r.role_title]
-        assert any("staff" in t for t in role_titles), "Should have Staff role"
-        assert any("senior" in t for t in role_titles), "Should have Senior role"
-        assert any("ml" in t or "machine learning" in t for t in role_titles), (
-            "Should have ML role"
-        )
-        assert any("manager" in t for t in role_titles), "Should have Manager role"
-
-        # All roles should share company info
-        for role in result.roles:
-            assert role.company_name == "SmarterDx"
-            assert role.is_remote is True
-            assert any("US" in str(r) for r in role.remote_regions)
-            # Salary should be consistent across roles (150-250k)
-            if role.salary_min is not None:
-                assert role.salary_min >= 150000
-            if role.salary_max is not None:
-                assert role.salary_max <= 260000  # Allow some variance
-
-    def test_founding_roles_sparse_data(self, eval_comments, instructor_client):
-        """Case 3: Galaxy - 3 founding roles, no salary.
-
-        Expected: Exactly 3 roles (Frontend, Backend, ML), no salary info.
-        """
-        comment = eval_comments["44159626"]
-        result, error, elapsed = timed_extract(instructor_client, comment, TEST_MODEL)
-
-        assert error is None, f"Extraction failed: {error}"
-        assert result is not None
-        assert result.is_job_posting is True
-        assert len(result.roles) == 3, (
-            f"Expected exactly 3 roles, got {len(result.roles)}"
-        )
-
-        role_titles = [r.role_title for r in result.roles if r.role_title]
-        assert any("Frontend" in t for t in role_titles), "Should have Frontend role"
-        assert any("Backend" in t for t in role_titles), "Should have Backend role"
-        assert any("Machine Learning" in t or "ML" in t for t in role_titles), (
-            "Should have ML role"
-        )
-
-        # Salary not mentioned - should be null for all roles
-        for role in result.roles:
-            assert role.salary_min is None, (
-                f"Salary should be null, got {role.salary_min}"
-            )
-            assert role.salary_max is None, (
-                f"Salary should be null, got {role.salary_max}"
-            )
-            # Location should be NYC
-            assert any("NYC" in loc or "NY" in loc for loc in role.locations), (
-                f"Location should include NYC, got {role.locations}"
-            )
-            # Company name
-            assert role.company_name == "Galaxy"
-            # Not remote (onsite in NYC)
-            assert role.is_remote is False or role.is_remote is None
-
-    def test_single_role_principal(self, eval_comments, instructor_client):
-        """Case 4: Snout - single principal-level role, remote US.
-
-        Expected: 1 role with correct title, remote, full-time.
-        """
-        comment = eval_comments["44159532"]
-        result, error, elapsed = timed_extract(instructor_client, comment, TEST_MODEL)
-
-        assert error is None, f"Extraction failed: {error}"
-        assert result is not None
-        assert result.is_job_posting is True
-        assert len(result.roles) == 1
-
-        role = result.roles[0]
-        assert role.company_name == "Snout"
-        assert "Principal" in role.role_title or "Software" in role.role_title
-        assert role.is_remote is True
-        assert role.employment_type is not None
-        assert role.employment_type.value == "Full-time"
-
-    def test_single_role_remote_with_salary(self, eval_comments, instructor_client):
-        """Case 5: Goody - single remote role with salary range.
-
-        Expected: 1 role, fully remote, $170-230K salary.
-        """
-        comment = eval_comments["44159548"]
-        result, error, elapsed = timed_extract(instructor_client, comment, TEST_MODEL)
-
-        assert error is None, f"Extraction failed: {error}"
-        assert result is not None
-        assert result.is_job_posting is True
-        assert len(result.roles) == 1
-
-        role = result.roles[0]
-        assert role.company_name == "Goody"
-        assert "Senior" in role.role_title or "Software" in role.role_title
-        assert role.is_remote is True
-        assert role.salary_min == 170000
-        assert role.salary_max == 230000
-        assert role.salary_currency == "USD"
-        # Equity mentioned but no specific amount -> should be null
-        assert role.equity is None
+# --- PARAMETRIZED TESTS ---
 
 
-class TestExtractionEdgeCases:
-    """Tests for edge cases and error handling."""
-
-    def test_empty_content(self, instructor_client):
-        """Should handle empty content gracefully."""
-        comment = {"id": "empty_test", "content": ""}
-        result, error, elapsed = timed_extract(instructor_client, comment, TEST_MODEL)
-
-        assert error is not None
-        assert (
-            "empty" in error.error_type.lower()
-            or "empty" in error.error_message.lower()
-        )
-
-    def test_non_job_posting(self, instructor_client):
-        """Should identify non-job-posting comments."""
-        comment = {
-            "id": "non_job_test",
-            "content": "Great thread! Looking forward to seeing the opportunities.",
-        }
-        result, error, elapsed = timed_extract(instructor_client, comment, TEST_MODEL)
-
-        # Should succeed but mark as not a job posting
-        if result is not None:
-            assert result.is_job_posting is False
-            assert len(result.roles) == 0
+@pytest.mark.parametrize(
+    "case",
+    EVAL_CASES,
+    ids=lambda c: c["name"],
+)
+def test_extraction(case, instructor_client):
+    """Run extraction test case from JSON fixture."""
+    result, error, elapsed = timed_extract(
+        instructor_client, case["comment"], TEST_MODEL
+    )
+    assert_extraction_matches(result, error, case["expected"], case["name"])
