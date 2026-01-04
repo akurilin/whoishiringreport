@@ -3,10 +3,10 @@
 Standalone script for downloading and incrementally syncing job posting comments.
 
 Usage:
-    python sync_comments.py              # Sync last 6 posts (default)
-    python sync_comments.py --posts 12   # Sync last 12 posts
-    python sync_comments.py --refresh    # Force full refresh (ignore cache)
-    python sync_comments.py --output X   # Custom output path
+    python sync_comments.py                    # Sync last 6 posts (default)
+    python sync_comments.py --latest-posts 2   # Sync last 2 posts
+    python sync_comments.py --refresh          # Force full refresh (ignore cache)
+    python sync_comments.py --output X         # Custom output path
 
 Test-friendly flags:
     python sync_comments.py --post-id 45800465  # Fetch specific post
@@ -409,6 +409,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--posts",
+        "--latest-posts",
         type=int,
         default=6,
         help="Number of recent posts to sync (default: 6)",

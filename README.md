@@ -1,69 +1,75 @@
-# HN "Who Is Hiring?" Report Generator
+# HN "Who Is Hiring?" Job Extractor
 
-Fully vibe-coded script to pull recent Hacker News "Who is hiring?" threads, scrape comments, find all comments mentioning a particular role, and produce an interactive HTML report.
+Extract structured job data from Hacker News "Who is hiring?" threads and generate an interactive HTML report.
 
 ## Report preview
 ![Interactive report screenshot](docs/assets/report.png)
 
 ## Quick start
-- Zero-thinking copy/paste (creates venv, installs deps, runs pipeline with default engineering management profile):
-  ```bash
-  python3 -m venv .venv
-  source .venv/bin/activate
-  pip install -r requirements.txt
-  make all PROFILE=profiles/engineering_management.yaml
-  ```
-- Swap profiles without clobbering others:
-  ```bash
-  make all PROFILE=profiles/ux_designer.yaml
-  ```
-- Adjust `MONTHS` to limit how far back to search. Outputs default to `out/` unless overridden.
 
-## Run steps manually
+```bash
+# Setup
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
-1) Fetch post list (~N months back):
-   ```bash
-   python who_is_hiring.py --months 6 --output out/posts.json
-   ```
-2) Fetch comments for those posts:
-   ```bash
-   python who_is_hiring.py --fetch-comments --input out/posts.json --output out/comments.json
-   ```
-3) Search for roles (defaults to engineering management profile):
-   ```bash
-   python who_is_hiring.py --search --input out/comments.json --output out/engineering_management/matches.json
-   ```
-   - Add `--no-extract` to skip LLM usage entirely when searching.
-4) Extract structured fields (title, location, remote, comp, etc.):
-   ```bash
-   python who_is_hiring.py --extract-from-matches --input out/engineering_management/matches.json --output out/engineering_management/matches_with_extraction.json
-   ```
-5) Generate the HTML report:
-   ```bash
-   python who_is_hiring.py --generate-html --input out/engineering_management/matches_with_extraction.json --output out/engineering_management/report.html
-   ```
-6) Utilities:
-   - List available profiles: `make list-profiles`
-   - See all flags: `python who_is_hiring.py -h`
+# Set your OpenAI API key
+export OPENAI_API_KEY=your_key_here  # or add to .env file
 
-## Profiles (what they are and how to create one)
-- Profiles live in `profiles/*.yaml` and define regex patterns for the roles you want to catch (e.g., engineering management, UX/design).
-- To add a profile:
-  1) Copy an existing file in `profiles/` and rename it (e.g., `profiles/data_science.yaml`).
-  2) Edit the `patterns:` list with your regexes and optional `name` fields.
-  3) Run `make list-profiles` to confirm it’s picked up, then run the pipeline with `PROFILE=profiles/your_profile.yaml`.
-- Regexes can be tricky; the fastest path is to describe your target roles/patterns to an AI coding assistant/agent and let it draft or refine the profile YAML for you, then review/tweak as needed.
+# Run the pipeline
+python sync_comments.py           # Fetch comments from recent threads
+python extract_jobs.py --limit 50 # Extract job data (limit for testing)
+python generate_report.py         # Generate HTML report (opens in browser)
+```
 
-## Notes
-- `OPENAI_API_KEY` **must** be set (in your shell or a `.env` file) before running; if it’s missing, the script exits immediately with a clear error.
-- Cached inputs (`out/posts.json`, `out/comments.json`, etc.) let you rerun later steps without re-scraping; the script now reuses them by default. Per-profile outputs land in `out/{profile_stem}/` to avoid clobbering other profiles.
-- The script hits the HN Algolia API for post discovery and the official HN API for comments.
+## Scripts
+
+### 1. `sync_comments.py` - Fetch comments from HN
+
+```bash
+python sync_comments.py                    # Fetch from recent threads (default: 6 months)
+python sync_comments.py --max-posts 3      # Limit to 3 most recent threads
+python sync_comments.py --post-id 12345    # Fetch specific thread by ID
+python sync_comments.py --refresh          # Re-fetch all comments
+```
+
+Output: `out/comments.json`
+
+### 2. `extract_jobs.py` - Extract structured job data
+
+Uses GPT-4o-mini to extract structured fields from each comment:
+- Role title, company name, company stage
+- Location, remote status, employment type
+- Salary range, equity percentage
+- Application method, company URL
+
+```bash
+python extract_jobs.py                     # Extract all unprocessed comments
+python extract_jobs.py --limit 100         # Extract first 100 unprocessed
+python extract_jobs.py --refresh           # Re-extract all comments
+python extract_jobs.py --model gpt-4o      # Use different model
+```
+
+Output: `out/extracted_jobs.json`
+
+### 3. `generate_report.py` - Generate HTML report
+
+```bash
+python generate_report.py                  # Generate and open in browser
+python generate_report.py --no-browser     # Generate without opening
+```
+
+Output: `out/report.html`
+
+## Requirements
+
+- Python 3.10+
+- `OPENAI_API_KEY` environment variable (or in `.env` file)
 
 ## Tests
-- Basic end-to-end check (from a shell where the virtualenv and dependencies are set up):  
-  ```bash
-  python3 -m venv .venv
-  source .venv/bin/activate
-  pip install -r requirements.txt
-  make test-e2e
-  ```
+
+```bash
+pytest tests/ -v
+```
+
+The extraction tests require `OPENAI_API_KEY` and make real API calls.
