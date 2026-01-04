@@ -249,7 +249,7 @@ def timed_extract(client, comment, model, case_name: str):
 
     print(f"\n  [{case_name}] Extracting with {model}...")
     start = time.time()
-    result, error = extract_from_comment(client, comment, model=model)
+    result, error, total_tokens = extract_from_comment(client, comment, model=model)
     elapsed = time.time() - start
 
     # Record timing
@@ -261,13 +261,15 @@ def timed_extract(client, comment, model, case_name: str):
         success=error is None,
         role_count=role_count,
         error_type=error.error_type if error else None,
+        total_tokens=total_tokens,
     )
     get_timing_report(model).extractions.append(timing)
 
+    tokens_str = f", {total_tokens} tokens" if total_tokens else ""
     if error:
         print(f"  [{case_name}] FAILED in {elapsed:.2f}s - {error.error_type}")
     else:
-        print(f"  [{case_name}] OK in {elapsed:.2f}s - {role_count} roles")
+        print(f"  [{case_name}] OK in {elapsed:.2f}s - {role_count} roles{tokens_str}")
 
     return result, error
 

@@ -26,14 +26,17 @@ all: sync extract report
 test:
 	$(ACTIVATE) $(PYTHON) -m pytest tests/ -v
 
+# Eval suite flags: no tracebacks, no warnings, suppress header
+EVAL_FLAGS := -v --tb=no -W ignore::DeprecationWarning -W ignore::FutureWarning --no-header
+
 # Run eval suite with OpenAI (default)
 eval:
-	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py -v
+	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py $(EVAL_FLAGS)
 
 # Run eval suite with Gemini
 eval-gemini:
-	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py -v --models gemini-2.0-flash-lite
+	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py $(EVAL_FLAGS) --models gemini-2.0-flash-lite
 
 # Compare all models
 eval-compare:
-	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py -v --models gpt-4o-mini,gemini-2.0-flash-lite,gemini-2.5-flash-lite
+	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py $(EVAL_FLAGS) --models gpt-4o-mini,gemini-2.0-flash-lite,gemini-2.5-flash-lite

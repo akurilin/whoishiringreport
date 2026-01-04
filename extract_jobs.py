@@ -328,20 +328,39 @@ OUTPUT QUALITY:
 - is_job_posting should be false for: comments asking questions, replies to other posts, meta-discussion"""
 
 
+def get_total_tokens(completion) -> int | None:
+    """Extract total token count from completion object.
+
+    Handles differences between OpenAI and Gemini response formats.
+    """
+    if completion is None:
+        return None
+
+    # OpenAI format: completion.usage.total_tokens
+    if hasattr(completion, "usage") and completion.usage is not None:
+        return getattr(completion.usage, "total_tokens", None)
+
+    # Gemini format: completion.usage_metadata.total_token_count
+    if hasattr(completion, "usage_metadata") and completion.usage_metadata is not None:
+        return getattr(completion.usage_metadata, "total_token_count", None)
+
+    return None
+
+
 def extract_from_comment(
     client: instructor.Instructor,
     comment: dict,
     model: str = DEFAULT_MODEL,
-) -> tuple[CommentExtraction | None, ExtractionError | None]:
+) -> tuple[CommentExtraction | None, ExtractionError | None, int | None]:
     """Extract structured job data from a single comment.
 
     Args:
         client: Instructor-wrapped OpenAI client
         comment: Comment dict with 'content' field
-        model: OpenAI model to use
+        model: Model to use
 
     Returns:
-        Tuple of (extraction_result, error). One will be None.
+        Tuple of (extraction_result, error, total_tokens). Error or result will be None.
     """
     content = comment.get("content", "")
     if not content or not content.strip():
@@ -349,7 +368,7 @@ def extract_from_comment(
             error_type="empty_content",
             error_message="Comment has no content",
             retryable=False,
-        )
+        ), None
 
     cleaned_content = clean_html_content(content)
 
@@ -358,7 +377,7 @@ def extract_from_comment(
         cleaned_content = cleaned_content[:6000] + "..."
 
     try:
-        extraction = client.chat.completions.create(
+        extraction, completion = client.chat.completions.create_with_completion(
             model=model,
             response_model=CommentExtraction,
             messages=[
@@ -370,20 +389,21 @@ def extract_from_comment(
             ],
             max_retries=2,
         )
-        return extraction, None
+        total_tokens = get_total_tokens(completion)
+        return extraction, None, total_tokens
 
     except ValidationError as e:
         return None, ExtractionError(
             error_type="validation_error",
             error_message=str(e),
             retryable=True,
-        )
+        ), None
     except Exception as e:
         return None, ExtractionError(
             error_type="api_error",
             error_message=str(e),
             retryable=True,
-        )
+        ), None
 
 
 # --- CACHING AND INCREMENTAL PROCESSING ---
@@ -534,7 +554,7 @@ def extract_jobs(
                 f"  Processing {idx}/{len(pending_comments)} (comment {comment_id})..."
             )
 
-        extraction, error = extract_from_comment(client, comment, model)
+        extraction, error, _tokens = extract_from_comment(client, comment, model)
         extracted_at = dt.datetime.now(dt.UTC).isoformat()
 
         if error:

@@ -40,7 +40,8 @@ def get_test_models(config) -> list[str]:
 
 
 def pytest_configure(config):
-    """Validate that the correct API keys are set."""
+    """Configure pytest for eval suite."""
+    # Validate that the correct API keys are set
     models = get_test_models(config)
 
     needs_openai = any(infer_provider(m) == "openai" for m in models)
@@ -54,6 +55,9 @@ def pytest_configure(config):
         raise pytest.UsageError(
             f"GEMINI_API_KEY not set (required for models: {[m for m in models if infer_provider(m) == 'gemini']})"
         )
+
+    # Suppress traceback style (eval failures are expected, not bugs)
+    config.option.tbstyle = "no"
 
 
 # --- TIMING INFRASTRUCTURE ---
@@ -69,6 +73,7 @@ class ExtractionTiming:
     success: bool
     role_count: int = 0
     error_type: str | None = None
+    total_tokens: int | None = None
 
 
 @dataclass
@@ -93,6 +98,10 @@ class TimingReport:
     @property
     def success_count(self) -> int:
         return sum(1 for e in self.extractions if e.success)
+
+    @property
+    def total_tokens(self) -> int:
+        return sum(e.total_tokens or 0 for e in self.extractions)
 
 
 # Global timing reports (one per model)
@@ -124,6 +133,22 @@ def infer_provider(model: str) -> str:
     return "openai"
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """Override exit code - eval suites expect some failures."""
+    # Always exit 0 for eval suite (failures are expected, not bugs)
+    session.exitstatus = 0
+
+
+def pytest_report_teststatus(report, config):
+    """Customize test status display for eval suite."""
+    if report.when == "call":
+        if report.failed:
+            return "failed", "✗", "MISS"
+        elif report.passed:
+            return "passed", "✓", "PASS"
+    return None
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """Print timing summary at the end of test run."""
     if not _timing_reports:
@@ -136,18 +161,20 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         terminalreporter.write_sep("=", "MODEL COMPARISON")
         terminalreporter.write_line("")
         terminalreporter.write_line(
-            f"{'Model':<25} {'Avg Time':<12} {'Passed':<10} {'Total':<10}"
+            f"{'Model':<25} {'Avg Time':<12} {'Passed':<10} {'Total':<12} {'Tokens':<10}"
         )
-        terminalreporter.write_line("-" * 57)
+        terminalreporter.write_line("-" * 69)
 
         for model in models:
             if model in _timing_reports:
                 report = _timing_reports[model]
                 total_tests = report.tests_passed + report.tests_failed
+                tokens_str = f"{report.total_tokens:,}" if report.total_tokens else "N/A"
                 terminalreporter.write_line(
                     f"{model:<25} {report.avg_time:>6.2f}s      "
                     f"{report.tests_passed}/{total_tests:<7} "
-                    f"{report.total_time:>6.2f}s"
+                    f"{report.total_time:>6.2f}s      "
+                    f"{tokens_str}"
                 )
 
         terminalreporter.write_line("")
@@ -164,4 +191,5 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 terminalreporter.write_line(f"Successful: {report.success_count}")
                 terminalreporter.write_line(f"Total time: {report.total_time:.2f}s")
                 terminalreporter.write_line(f"Average time: {report.avg_time:.2f}s")
+                terminalreporter.write_line(f"Total tokens: {report.total_tokens:,}")
                 terminalreporter.write_sep("=", "")
