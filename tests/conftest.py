@@ -3,9 +3,11 @@
 This file is automatically loaded by pytest before running tests.
 """
 
+import json
 import os
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -23,6 +25,9 @@ load_dotenv()
 
 # Default model for tests
 DEFAULT_TEST_MODEL = "gpt-4o-mini"
+
+# Stats file for historical analysis
+STATS_FILE = Path(__file__).parent.parent / "out" / "eval_stats.jsonl"
 
 
 def pytest_addoption(parser):
@@ -60,6 +65,15 @@ def pytest_configure(config):
 
     # Suppress traceback style (eval failures are expected, not bugs)
     config.option.tbstyle = "no"
+
+
+def pytest_collection_finish(session):
+    """Announce stats file location when running eval tests."""
+    has_eval_tests = any(
+        "test_extraction" in item.nodeid for item in session.items
+    )
+    if has_eval_tests:
+        print(f"\nStats will be saved to: {STATS_FILE}\n")
 
 
 # --- TIMING INFRASTRUCTURE ---
@@ -115,6 +129,30 @@ def get_timing_report(model: str) -> TimingReport:
     if model not in _timing_reports:
         _timing_reports[model] = TimingReport(model=model)
     return _timing_reports[model]
+
+
+def write_stats_jsonl():
+    """Append per-extraction stats to JSONL file for later analysis."""
+    if not _timing_reports:
+        return
+
+    timestamp = datetime.now().isoformat()
+    STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(STATS_FILE, "a") as f:
+        for report in _timing_reports.values():
+            for extraction in report.extractions:
+                record = {
+                    "timestamp": timestamp,
+                    "model": extraction.model,
+                    "case_name": extraction.case_name,
+                    "elapsed_seconds": extraction.elapsed_seconds,
+                    "success": extraction.success,
+                    "role_count": extraction.role_count,
+                    "error_type": extraction.error_type,
+                    "total_tokens": extraction.total_tokens,
+                }
+                f.write(json.dumps(record) + "\n")
 
 
 def record_test_result(model: str, passed: bool):
@@ -188,3 +226,6 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 terminalreporter.write_line(f"Average time: {report.avg_time:.2f}s")
                 terminalreporter.write_line(f"Total tokens: {report.total_tokens:,}")
                 terminalreporter.write_sep("=", "")
+
+    # Persist stats to JSONL for later analysis
+    write_stats_jsonl()
