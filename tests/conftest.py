@@ -15,6 +15,8 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from utils import infer_provider  # noqa: E402 - must be after path setup
+
 # Load .env file before any tests run
 # This ensures API keys are available for skip checks
 load_dotenv()
@@ -124,15 +126,6 @@ def record_test_result(model: str, passed: bool):
         report.tests_failed += 1
 
 
-def infer_provider(model: str) -> str:
-    """Infer provider from model name (duplicated from extract_jobs for independence)."""
-    if model.startswith(("gpt-", "o1-", "o3-")):
-        return "openai"
-    elif model.startswith("gemini-"):
-        return "gemini"
-    return "openai"
-
-
 def pytest_sessionfinish(session, exitstatus):
     """Override exit code - eval suites expect some failures."""
     # Always exit 0 for eval suite (failures are expected, not bugs)
@@ -169,7 +162,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             if model in _timing_reports:
                 report = _timing_reports[model]
                 total_tests = report.tests_passed + report.tests_failed
-                tokens_str = f"{report.total_tokens:,}" if report.total_tokens else "N/A"
+                tokens_str = (
+                    f"{report.total_tokens:,}" if report.total_tokens else "N/A"
+                )
                 terminalreporter.write_line(
                     f"{model:<25} {report.avg_time:>6.2f}s      "
                     f"{report.tests_passed}/{total_tests:<7} "

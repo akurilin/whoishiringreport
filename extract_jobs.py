@@ -31,6 +31,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from sync_comments import load_cache
+from utils import infer_provider
 
 # Load environment variables
 load_dotenv()
@@ -47,24 +48,6 @@ RATE_LIMIT_DELAY = 0.15  # seconds between API calls
 
 # Default model
 DEFAULT_MODEL = "gpt-4o-mini"
-
-
-def infer_provider(model: str) -> str:
-    """Infer the provider from the model name.
-
-    Args:
-        model: Model name (e.g., 'gpt-4o-mini', 'gemini-2.0-flash-lite')
-
-    Returns:
-        Provider name ('openai' or 'gemini')
-    """
-    if model.startswith(("gpt-", "o1-", "o3-")):
-        return "openai"
-    elif model.startswith("gemini-"):
-        return "gemini"
-    else:
-        # Default to OpenAI for unknown models
-        return "openai"
 
 
 # --- ENUMS ---
@@ -277,7 +260,9 @@ def create_instructor_client(model: str = DEFAULT_MODEL) -> instructor.Instructo
         return from_genai(client, model=model)
 
     else:
-        raise RuntimeError(f"Unsupported provider: {provider}. Use 'openai' or 'gemini'.")
+        raise RuntimeError(
+            f"Unsupported provider: {provider}. Use 'openai' or 'gemini'."
+        )
 
 
 # --- EXTRACTION LOGIC ---
@@ -364,11 +349,15 @@ def extract_from_comment(
     """
     content = comment.get("content", "")
     if not content or not content.strip():
-        return None, ExtractionError(
-            error_type="empty_content",
-            error_message="Comment has no content",
-            retryable=False,
-        ), None
+        return (
+            None,
+            ExtractionError(
+                error_type="empty_content",
+                error_message="Comment has no content",
+                retryable=False,
+            ),
+            None,
+        )
 
     cleaned_content = clean_html_content(content)
 
@@ -393,17 +382,25 @@ def extract_from_comment(
         return extraction, None, total_tokens
 
     except ValidationError as e:
-        return None, ExtractionError(
-            error_type="validation_error",
-            error_message=str(e),
-            retryable=True,
-        ), None
+        return (
+            None,
+            ExtractionError(
+                error_type="validation_error",
+                error_message=str(e),
+                retryable=True,
+            ),
+            None,
+        )
     except Exception as e:
-        return None, ExtractionError(
-            error_type="api_error",
-            error_message=str(e),
-            retryable=True,
-        ), None
+        return (
+            None,
+            ExtractionError(
+                error_type="api_error",
+                error_message=str(e),
+                retryable=True,
+            ),
+            None,
+        )
 
 
 # --- CACHING AND INCREMENTAL PROCESSING ---
