@@ -7,22 +7,22 @@ These tests validate that extraction:
 
 Test cases are defined in fixtures/eval_cases.json for easy human review.
 
-Run with: pytest tests/test_extraction.py -v
+Run with:
+    pytest tests/test_extraction.py -v                       # Default (gpt-4o-mini)
+    pytest tests/test_extraction.py -v --models gemini-2.0-flash-lite
+    pytest tests/test_extraction.py -v --models gpt-4o-mini,gemini-2.0-flash-lite,gemini-2.5-flash-lite
 """
 
 import json
-import os
 import time
 from pathlib import Path
 
-import pytest
-
-# Skip all tests if OPENAI_API_KEY is not set
-pytestmark = pytest.mark.skipif(
-    not os.getenv("OPENAI_API_KEY"),
-    reason="OPENAI_API_KEY not set - skipping extraction eval tests",
+from conftest import (
+    ExtractionTiming,
+    get_test_models,
+    get_timing_report,
+    record_test_result,
 )
-
 
 # --- FIXTURES ---
 
@@ -37,17 +37,17 @@ def load_eval_cases() -> list[dict]:
 
 EVAL_CASES = load_eval_cases()
 
-
-@pytest.fixture(scope="module")
-def instructor_client():
-    """Create an Instructor-wrapped OpenAI client for testing."""
-    from extract_jobs import create_instructor_client
-
-    return create_instructor_client()
+# Cache for instructor clients (one per model)
+_client_cache: dict[str, object] = {}
 
 
-# Model to use for tests - change this to compare different models
-TEST_MODEL = "gpt-4o-mini"
+def get_client(model: str):
+    """Get or create an instructor client for a model."""
+    if model not in _client_cache:
+        from extract_jobs import create_instructor_client
+
+        _client_cache[model] = create_instructor_client(model)
+    return _client_cache[model]
 
 
 # --- ASSERTION HELPERS ---
@@ -243,38 +243,65 @@ def assert_extraction_matches(result, error, expected: dict, case_name: str):
 # --- TIMED EXTRACTION ---
 
 
-def timed_extract(client, comment, model):
-    """Wrapper that times extraction and prints duration."""
+def timed_extract(client, comment, model, case_name: str):
+    """Wrapper that times extraction and records to timing report."""
     from extract_jobs import extract_from_comment
 
-    test_name = comment.get("id", "unknown")
-    print(f"\n  [{test_name}] Starting extraction with {model}...")
+    print(f"\n  [{case_name}] Extracting with {model}...")
     start = time.time()
     result, error = extract_from_comment(client, comment, model=model)
     elapsed = time.time() - start
 
-    if error:
-        print(f"  [{test_name}] FAILED in {elapsed:.2f}s - {error.error_type}")
-    else:
-        role_count = len(result.roles) if result else 0
-        print(
-            f"  [{test_name}] Completed in {elapsed:.2f}s - {role_count} roles extracted"
-        )
-
-    return result, error, elapsed
-
-
-# --- PARAMETRIZED TESTS ---
-
-
-@pytest.mark.parametrize(
-    "case",
-    EVAL_CASES,
-    ids=lambda c: c["name"],
-)
-def test_extraction(case, instructor_client):
-    """Run extraction test case from JSON fixture."""
-    result, error, elapsed = timed_extract(
-        instructor_client, case["comment"], TEST_MODEL
+    # Record timing
+    role_count = len(result.roles) if result else 0
+    timing = ExtractionTiming(
+        case_name=case_name,
+        model=model,
+        elapsed_seconds=elapsed,
+        success=error is None,
+        role_count=role_count,
+        error_type=error.error_type if error else None,
     )
-    assert_extraction_matches(result, error, case["expected"], case["name"])
+    get_timing_report(model).extractions.append(timing)
+
+    if error:
+        print(f"  [{case_name}] FAILED in {elapsed:.2f}s - {error.error_type}")
+    else:
+        print(f"  [{case_name}] OK in {elapsed:.2f}s - {role_count} roles")
+
+    return result, error
+
+
+# --- DYNAMIC TEST GENERATION ---
+
+
+def pytest_generate_tests(metafunc):
+    """Generate test parameters based on CLI options."""
+    if "case" in metafunc.fixturenames and "model" in metafunc.fixturenames:
+        models = get_test_models(metafunc.config)
+
+        # Generate tests for all models × all cases
+        params = [(case, model) for model in models for case in EVAL_CASES]
+
+        if len(models) > 1:
+            ids = [f"{model}::{case['name']}" for model in models for case in EVAL_CASES]
+        else:
+            ids = [case["name"] for case in EVAL_CASES]
+
+        metafunc.parametrize("case,model", params, ids=ids)
+
+
+# --- TESTS ---
+
+
+def test_extraction(case, model):
+    """Run extraction test case from JSON fixture."""
+    client = get_client(model)
+    result, error = timed_extract(client, case["comment"], model, case["name"])
+
+    try:
+        assert_extraction_matches(result, error, case["expected"], case["name"])
+        record_test_result(model, passed=True)
+    except AssertionError:
+        record_test_result(model, passed=False)
+        raise

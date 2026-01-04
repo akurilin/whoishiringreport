@@ -40,10 +40,31 @@ BASE_DIR = Path(__file__).parent
 OUT_DIR = BASE_DIR / "out"
 DEFAULT_COMMENTS_PATH = OUT_DIR / "comments.json"
 DEFAULT_OUTPUT_PATH = OUT_DIR / "extracted_jobs.json"
-DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_PROVIDER = "openai"
 SCHEMA_VERSION = 1
 BATCH_SIZE = 50  # Save progress every N extractions
 RATE_LIMIT_DELAY = 0.15  # seconds between API calls
+
+# Default model
+DEFAULT_MODEL = "gpt-4o-mini"
+
+
+def infer_provider(model: str) -> str:
+    """Infer the provider from the model name.
+
+    Args:
+        model: Model name (e.g., 'gpt-4o-mini', 'gemini-2.0-flash-lite')
+
+    Returns:
+        Provider name ('openai' or 'gemini')
+    """
+    if model.startswith(("gpt-", "o1-", "o3-")):
+        return "openai"
+    elif model.startswith("gemini-"):
+        return "gemini"
+    else:
+        # Default to OpenAI for unknown models
+        return "openai"
 
 
 # --- ENUMS ---
@@ -56,6 +77,16 @@ class EmploymentType(str, Enum):
     INTERNSHIP = "Internship"
     FRACTIONAL = "Fractional"
 
+    @classmethod
+    def _missing_(cls, value):
+        """Handle string values that don't exactly match enum values."""
+        if isinstance(value, str):
+            # Try case-insensitive match
+            for member in cls:
+                if member.value.lower() == value.lower():
+                    return member
+        return None
+
 
 class CompanyStage(str, Enum):
     PRE_SEED = "Pre-seed"
@@ -66,6 +97,15 @@ class CompanyStage(str, Enum):
     SERIES_D_PLUS = "Series D+"
     PUBLIC = "Public"
     BOOTSTRAPPED = "Bootstrapped"
+
+    @classmethod
+    def _missing_(cls, value):
+        """Handle string values that don't exactly match enum values."""
+        if isinstance(value, str):
+            for member in cls:
+                if member.value.lower() == value.lower():
+                    return member
+        return None
 
 
 # --- PYDANTIC MODELS ---
@@ -140,6 +180,40 @@ class ExtractedRole(BaseModel):
         """Convert None to empty list for list fields (handles smaller models returning null)."""
         return v if v is not None else []
 
+    @field_validator("employment_type", mode="before")
+    @classmethod
+    def coerce_employment_type(cls, v):
+        """Coerce string to EmploymentType enum (handles Gemini returning raw strings)."""
+        if v is None or isinstance(v, EmploymentType):
+            return v
+        if isinstance(v, str):
+            # Try exact match first
+            try:
+                return EmploymentType(v)
+            except ValueError:
+                pass
+            # Try case-insensitive match
+            for member in EmploymentType:
+                if member.value.lower() == v.lower():
+                    return member
+        return None
+
+    @field_validator("company_stage", mode="before")
+    @classmethod
+    def coerce_company_stage(cls, v):
+        """Coerce string to CompanyStage enum (handles Gemini returning raw strings)."""
+        if v is None or isinstance(v, CompanyStage):
+            return v
+        if isinstance(v, str):
+            try:
+                return CompanyStage(v)
+            except ValueError:
+                pass
+            for member in CompanyStage:
+                if member.value.lower() == v.lower():
+                    return member
+        return None
+
 
 class CommentExtraction(BaseModel):
     """LLM extraction result for a single comment (may contain multiple roles)."""
@@ -169,14 +243,41 @@ class ExtractionError(BaseModel):
 # --- INSTRUCTOR CLIENT ---
 
 
-def create_instructor_client() -> instructor.Instructor:
-    """Create an Instructor-wrapped OpenAI client."""
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not found in environment")
+def create_instructor_client(model: str = DEFAULT_MODEL) -> instructor.Instructor:
+    """Create an Instructor-wrapped client for the given model.
 
-    client = OpenAI(api_key=api_key)
-    return instructor.from_openai(client)
+    Provider is automatically inferred from the model name.
+
+    Args:
+        model: Model name (e.g., 'gpt-4o-mini', 'gemini-2.0-flash-lite')
+
+    Returns:
+        Instructor client configured for the provider
+
+    Raises:
+        RuntimeError: If API key is missing or provider is unsupported
+    """
+    provider = infer_provider(model)
+
+    if provider == "openai":
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY not found in environment")
+        return instructor.from_openai(OpenAI(api_key=api_key))
+
+    elif provider == "gemini":
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY not found in environment")
+        # Use the new google.genai SDK
+        from google import genai
+        from instructor import from_genai
+
+        client = genai.Client(api_key=api_key)
+        return from_genai(client, model=model)
+
+    else:
+        raise RuntimeError(f"Unsupported provider: {provider}. Use 'openai' or 'gemini'.")
 
 
 # --- EXTRACTION LOGIC ---
@@ -379,7 +480,7 @@ def extract_jobs(
         output_path: Path to write extraction results
         limit: Maximum comments to process (None = all)
         refresh: If True, re-extract all comments
-        model: OpenAI model to use
+        model: Model to use (provider is inferred from model name)
 
     Returns:
         The updated extraction cache
@@ -415,8 +516,9 @@ def extract_jobs(
         return extraction_cache
 
     # Initialize client
-    client = create_instructor_client()
-    print(f"Using model: {model}")
+    provider = infer_provider(model)
+    client = create_instructor_client(model)
+    print(f"Using model: {model} (provider: {provider})")
 
     # Process comments
     new_rows: list[dict] = []
@@ -538,7 +640,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default=DEFAULT_MODEL,
-        help=f"OpenAI model to use (default: {DEFAULT_MODEL})",
+        help=f"Model to use (default: {DEFAULT_MODEL}). Provider is inferred from model name.",
     )
     return parser.parse_args()
 
@@ -547,9 +649,14 @@ def main() -> None:
     """Main entry point."""
     args = parse_args()
 
-    # Validate API key upfront
-    if not os.getenv("OPENAI_API_KEY"):
+    # Validate API key upfront based on model
+    provider = infer_provider(args.model)
+    if provider == "openai" and not os.getenv("OPENAI_API_KEY"):
         print("Error: OPENAI_API_KEY not found in environment.", file=sys.stderr)
+        print("Set it in your shell or .env file.", file=sys.stderr)
+        sys.exit(1)
+    elif provider == "gemini" and not os.getenv("GEMINI_API_KEY"):
+        print("Error: GEMINI_API_KEY not found in environment.", file=sys.stderr)
         print("Set it in your shell or .env file.", file=sys.stderr)
         sys.exit(1)
 
