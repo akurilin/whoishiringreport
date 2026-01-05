@@ -24,3 +24,8 @@ known-first-party = ["sync_comments", "who_is_hiring"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "evals"]
+python_files = ["test_*.py", "eval_*.py"]
+python_functions = ["test_*"]

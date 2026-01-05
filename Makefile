@@ -1,7 +1,7 @@
 .PHONY: sync report all test baml-generate \
         extract-instructor-openai extract-instructor-gemini \
         extract-baml-openai extract-baml-gemini \
-        eval-instructor-openai eval-instructor-gemini eval-instructor-all \
+        eval eval-instructor-openai eval-instructor-gemini eval-instructor-all \
         eval-baml-openai eval-baml-gemini \
         eval-all-permutations
 
@@ -40,23 +40,25 @@ extract-baml-gemini:
 
 # --- EVAL SUITE ---
 
+eval: eval-all-permutations
+
 eval-instructor-openai:
-	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py $(EVAL_FLAGS)
+	$(ACTIVATE) $(PYTHON) -m pytest evals/ $(EVAL_FLAGS)
 
 eval-instructor-gemini:
-	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py $(EVAL_FLAGS) --models gemini-2.0-flash-lite
+	$(ACTIVATE) $(PYTHON) -m pytest evals/ $(EVAL_FLAGS) --models gemini-2.0-flash-lite
 
 eval-instructor-all:
-	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py $(EVAL_FLAGS) --models $(ALL_MODELS)
+	$(ACTIVATE) $(PYTHON) -m pytest evals/ $(EVAL_FLAGS) --models $(ALL_MODELS)
 
 eval-baml-openai:
-	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py $(EVAL_FLAGS) --extractors baml
+	$(ACTIVATE) $(PYTHON) -m pytest evals/ $(EVAL_FLAGS) --extractors baml
 
 eval-baml-gemini:
-	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py $(EVAL_FLAGS) --extractors baml --models gemini-2.0-flash-lite
+	$(ACTIVATE) $(PYTHON) -m pytest evals/ $(EVAL_FLAGS) --extractors baml --models gemini-2.0-flash-lite
 
 eval-all-permutations:
-	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py $(EVAL_FLAGS) --extractors $(ALL_EXTRACTORS) --models $(ALL_MODELS)
+	$(ACTIVATE) $(PYTHON) -m pytest evals/ $(EVAL_FLAGS) --extractors $(ALL_EXTRACTORS) --models $(ALL_MODELS)
 
 # --- TESTING & BUILD ---
 

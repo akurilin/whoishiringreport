@@ -1,6 +1,6 @@
 """Eval suite for job extraction using real HN comments as golden standards.
 
-These tests validate that extraction:
+These evals validate that extraction:
 1. Correctly identifies job postings
 2. Handles one-to-many (multiple roles per comment)
 3. Extracts expected fields accurately
@@ -8,9 +8,9 @@ These tests validate that extraction:
 Test cases are defined in fixtures/eval_cases.json for easy human review.
 
 Run with:
-    pytest tests/test_extraction.py -v                       # Default (gpt-4o-mini)
-    pytest tests/test_extraction.py -v --models gemini-2.0-flash-lite
-    pytest tests/test_extraction.py -v --models gpt-4o-mini,gemini-2.0-flash-lite,gemini-2.5-flash-lite
+    make eval-instructor-openai                              # Default (gpt-4o-mini)
+    make eval-instructor-gemini                              # Gemini model
+    make eval-all-permutations                               # All extractors × models
 """
 
 import json
@@ -37,29 +37,6 @@ def load_eval_cases() -> list[dict]:
 
 
 EVAL_CASES = load_eval_cases()
-
-# Cache for instructor clients (one per model)
-_client_cache: dict[str, object] = {}
-
-
-def get_client(model: str, extractor: str):
-    """Get or create an extraction client for a model.
-
-    Args:
-        model: Model name (e.g., 'gpt-4o-mini')
-        extractor: Extraction backend ('instructor' or 'baml')
-
-    Returns:
-        Client for instructor, or None for BAML (which doesn't need one)
-    """
-    if extractor == "baml":
-        return None  # BAML doesn't need a pre-created client
-
-    if model not in _client_cache:
-        from extract_jobs import create_instructor_client
-
-        _client_cache[model] = create_instructor_client(model)
-    return _client_cache[model]
 
 
 # --- ASSERTION HELPERS ---
@@ -255,19 +232,17 @@ def assert_extraction_matches(result, error, expected: dict, case_name: str):
 # --- TIMED EXTRACTION ---
 
 
-def timed_extract(client, comment, model, case_name: str, extractor: str):
+def timed_extract(comment, model, case_name: str, extractor: str):
     """Wrapper that times extraction and records to timing report."""
     print(f"\n  [{case_name}] Extracting with {model} ({extractor})...")
     start = time.time()
 
     if extractor == "baml":
-        from extract_jobs_baml import extract_from_comment_baml
-
-        result, error, total_tokens = extract_from_comment_baml(comment, model)
+        from extract_jobs_baml import extract_from_comment_baml as extract_fn
     else:
-        from extract_jobs import extract_from_comment
+        from extract_jobs_instructor import extract_from_comment_instructor as extract_fn
 
-        result, error, total_tokens = extract_from_comment(client, comment, model=model)
+    result, error, total_tokens = extract_fn(comment, model)
 
     elapsed = time.time() - start
 
@@ -334,9 +309,8 @@ def pytest_generate_tests(metafunc):
 
 def test_extraction(case, model, extractor):
     """Run extraction test case from JSON fixture."""
-    client = get_client(model, extractor)
     result, error = timed_extract(
-        client, case["comment"], model, case["name"], extractor
+        case["comment"], model, case["name"], extractor
     )
 
     try:
