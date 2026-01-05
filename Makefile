@@ -1,42 +1,69 @@
-.PHONY: sync extract extract-gemini report all test eval eval-gemini
+.PHONY: sync report all test baml-generate \
+        extract-instructor-openai extract-instructor-gemini \
+        extract-baml-openai extract-baml-gemini \
+        eval eval-instructor-openai eval-instructor-gemini eval-instructor-all \
+        eval-baml-openai eval-baml-gemini \
+        eval-all-permutations
+
+# --- VARIABLES ---
 
 PYTHON := .venv/bin/python
 ACTIVATE := . .venv/bin/activate &&
+EVAL_FLAGS := -v --tb=no -W ignore::DeprecationWarning -W ignore::FutureWarning --no-header
 
-# Sync comments from HN threads
+ALL_MODELS := gpt-4o-mini,gemini-2.0-flash-lite,gemini-2.5-flash-lite
+ALL_EXTRACTORS := instructor,baml
+
+# --- DATA PIPELINE ---
+
 sync:
 	$(ACTIVATE) $(PYTHON) sync_comments.py
 
-# Extract structured job data (default: OpenAI)
-extract:
-	$(ACTIVATE) $(PYTHON) extract_jobs.py
-
-# Extract with Gemini
-extract-gemini:
-	$(ACTIVATE) $(PYTHON) extract_jobs.py --model gemini-2.0-flash-lite
-
-# Generate HTML report
 report:
 	$(ACTIVATE) $(PYTHON) generate_report.py
 
-# Run full pipeline
-all: sync extract report
+all: sync extract-instructor-openai report
 
-# Run tests
+# --- EXTRACTION ---
+
+extract-instructor-openai:
+	$(ACTIVATE) $(PYTHON) extract_jobs.py
+
+extract-instructor-gemini:
+	$(ACTIVATE) $(PYTHON) extract_jobs.py --model gemini-2.0-flash-lite
+
+extract-baml-openai:
+	$(ACTIVATE) $(PYTHON) extract_jobs.py --extractor baml
+
+extract-baml-gemini:
+	$(ACTIVATE) $(PYTHON) extract_jobs.py --extractor baml --model gemini-2.0-flash-lite
+
+# --- EVAL SUITE ---
+
+eval: eval-all-permutations
+
+eval-instructor-openai:
+	$(ACTIVATE) $(PYTHON) -m pytest evals/ $(EVAL_FLAGS)
+
+eval-instructor-gemini:
+	$(ACTIVATE) $(PYTHON) -m pytest evals/ $(EVAL_FLAGS) --models gemini-2.0-flash-lite
+
+eval-instructor-all:
+	$(ACTIVATE) $(PYTHON) -m pytest evals/ $(EVAL_FLAGS) --models $(ALL_MODELS)
+
+eval-baml-openai:
+	$(ACTIVATE) $(PYTHON) -m pytest evals/ $(EVAL_FLAGS) --extractors baml
+
+eval-baml-gemini:
+	$(ACTIVATE) $(PYTHON) -m pytest evals/ $(EVAL_FLAGS) --extractors baml --models gemini-2.0-flash-lite
+
+eval-all-permutations:
+	$(ACTIVATE) $(PYTHON) -m pytest evals/ $(EVAL_FLAGS) --extractors $(ALL_EXTRACTORS) --models $(ALL_MODELS)
+
+# --- TESTING & BUILD ---
+
 test:
 	$(ACTIVATE) $(PYTHON) -m pytest tests/ -v
 
-# Eval suite flags: no tracebacks, no warnings, suppress header
-EVAL_FLAGS := -v --tb=no -W ignore::DeprecationWarning -W ignore::FutureWarning --no-header
-
-# Run eval suite with OpenAI (default)
-eval:
-	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py $(EVAL_FLAGS)
-
-# Run eval suite with Gemini
-eval-gemini:
-	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py $(EVAL_FLAGS) --models gemini-2.0-flash-lite
-
-# Compare all models
-eval-compare:
-	$(ACTIVATE) $(PYTHON) -m pytest tests/test_extraction.py $(EVAL_FLAGS) --models gpt-4o-mini,gemini-2.0-flash-lite,gemini-2.5-flash-lite
+baml-generate:
+	$(ACTIVATE) baml-cli generate

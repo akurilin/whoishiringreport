@@ -1,6 +1,8 @@
 requests>=2.31.0
 openai>=1.0.0
 instructor[google-genai]>=1.0.0
+baml-py>=0.70.0
+pandas>=2.0.0
 python-dotenv>=1.0.0
 Jinja2>=3.1.2
 PyYAML>=6.0.0
