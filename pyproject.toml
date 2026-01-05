@@ -1,6 +1,7 @@
 [tool.ruff]
 target-version = "py312"
 line-length = 88
+exclude = ["baml_client"]
 
 [tool.ruff.lint]
 select = [
