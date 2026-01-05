@@ -7,3 +7,7 @@
 - `tests/test_extraction.py` - Eval suite for extraction accuracy
 - `tests/fixtures/eval_cases.json` - Golden test cases for eval suite
 - `Makefile` - Commands: sync, extract, report, eval, eval-compare
+
+## Testing
+
+- Use one of the commands in the Makefile
