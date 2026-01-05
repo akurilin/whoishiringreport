@@ -19,6 +19,7 @@ from pathlib import Path
 
 from conftest import (
     ExtractionTiming,
+    get_test_extractors,
     get_test_models,
     get_timing_report,
     record_test_result,
@@ -41,8 +42,19 @@ EVAL_CASES = load_eval_cases()
 _client_cache: dict[str, object] = {}
 
 
-def get_client(model: str):
-    """Get or create an instructor client for a model."""
+def get_client(model: str, extractor: str):
+    """Get or create an extraction client for a model.
+
+    Args:
+        model: Model name (e.g., 'gpt-4o-mini')
+        extractor: Extraction backend ('instructor' or 'baml')
+
+    Returns:
+        Client for instructor, or None for BAML (which doesn't need one)
+    """
+    if extractor == "baml":
+        return None  # BAML doesn't need a pre-created client
+
     if model not in _client_cache:
         from extract_jobs import create_instructor_client
 
@@ -243,13 +255,20 @@ def assert_extraction_matches(result, error, expected: dict, case_name: str):
 # --- TIMED EXTRACTION ---
 
 
-def timed_extract(client, comment, model, case_name: str):
+def timed_extract(client, comment, model, case_name: str, extractor: str):
     """Wrapper that times extraction and records to timing report."""
-    from extract_jobs import extract_from_comment
-
-    print(f"\n  [{case_name}] Extracting with {model}...")
+    print(f"\n  [{case_name}] Extracting with {model} ({extractor})...")
     start = time.time()
-    result, error, total_tokens = extract_from_comment(client, comment, model=model)
+
+    if extractor == "baml":
+        from extract_jobs_baml import extract_from_comment_baml
+
+        result, error, total_tokens = extract_from_comment_baml(comment, model)
+    else:
+        from extract_jobs import extract_from_comment
+
+        result, error, total_tokens = extract_from_comment(client, comment, model=model)
+
     elapsed = time.time() - start
 
     # Record timing
@@ -257,13 +276,14 @@ def timed_extract(client, comment, model, case_name: str):
     timing = ExtractionTiming(
         case_name=case_name,
         model=model,
+        extractor=extractor,
         elapsed_seconds=elapsed,
         success=error is None,
         role_count=role_count,
         error_type=error.error_type if error else None,
         total_tokens=total_tokens,
     )
-    get_timing_report(model).extractions.append(timing)
+    get_timing_report(extractor, model).extractions.append(timing)
 
     tokens_str = f", {total_tokens} tokens" if total_tokens else ""
     if error:
@@ -279,31 +299,49 @@ def timed_extract(client, comment, model, case_name: str):
 
 def pytest_generate_tests(metafunc):
     """Generate test parameters based on CLI options."""
-    if "case" in metafunc.fixturenames and "model" in metafunc.fixturenames:
+    if (
+        "case" in metafunc.fixturenames
+        and "model" in metafunc.fixturenames
+        and "extractor" in metafunc.fixturenames
+    ):
         models = get_test_models(metafunc.config)
+        extractors = get_test_extractors(metafunc.config)
 
-        # Generate tests for all models × all cases
-        params = [(case, model) for model in models for case in EVAL_CASES]
+        # Generate tests for all extractors × models × cases
+        params = [
+            (case, model, extractor)
+            for extractor in extractors
+            for model in models
+            for case in EVAL_CASES
+        ]
 
-        if len(models) > 1:
-            ids = [f"{model}::{case['name']}" for model in models for case in EVAL_CASES]
+        # Build test IDs based on how many dimensions vary
+        if len(extractors) > 1 or len(models) > 1:
+            ids = [
+                f"{extractor}::{model}::{case['name']}"
+                for extractor in extractors
+                for model in models
+                for case in EVAL_CASES
+            ]
         else:
             ids = [case["name"] for case in EVAL_CASES]
 
-        metafunc.parametrize("case,model", params, ids=ids)
+        metafunc.parametrize("case,model,extractor", params, ids=ids)
 
 
 # --- TESTS ---
 
 
-def test_extraction(case, model):
+def test_extraction(case, model, extractor):
     """Run extraction test case from JSON fixture."""
-    client = get_client(model)
-    result, error = timed_extract(client, case["comment"], model, case["name"])
+    client = get_client(model, extractor)
+    result, error = timed_extract(
+        client, case["comment"], model, case["name"], extractor
+    )
 
     try:
         assert_extraction_matches(result, error, case["expected"], case["name"])
-        record_test_result(model, passed=True)
+        record_test_result(extractor, model, passed=True)
     except AssertionError:
-        record_test_result(model, passed=False)
+        record_test_result(extractor, model, passed=False)
         raise

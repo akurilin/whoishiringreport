@@ -489,6 +489,7 @@ def extract_jobs(
     limit: int | None = None,
     refresh: bool = False,
     model: str = DEFAULT_MODEL,
+    extractor: str = "instructor",
 ) -> dict:
     """Main extraction function.
 
@@ -498,6 +499,7 @@ def extract_jobs(
         limit: Maximum comments to process (None = all)
         refresh: If True, re-extract all comments
         model: Model to use (provider is inferred from model name)
+        extractor: Extraction backend ('instructor' or 'baml')
 
     Returns:
         The updated extraction cache
@@ -532,10 +534,21 @@ def extract_jobs(
         print("No new comments to process.")
         return extraction_cache
 
-    # Initialize client
+    # Initialize client and extraction function based on extractor type
     provider = infer_provider(model)
-    client = create_instructor_client(model)
-    print(f"Using model: {model} (provider: {provider})")
+    if extractor == "baml":
+        from extract_jobs_baml import extract_from_comment_baml
+
+        client = None  # BAML doesn't need a pre-created client
+
+        def extract_fn(c, comment, m):
+            return extract_from_comment_baml(comment, m)
+
+        print(f"Using model: {model} (extractor: baml)")
+    else:
+        client = create_instructor_client(model)
+        extract_fn = extract_from_comment
+        print(f"Using model: {model} (extractor: instructor, provider: {provider})")
 
     # Process comments
     new_rows: list[dict] = []
@@ -551,7 +564,7 @@ def extract_jobs(
                 f"  Processing {idx}/{len(pending_comments)} (comment {comment_id})..."
             )
 
-        extraction, error, _tokens = extract_from_comment(client, comment, model)
+        extraction, error, _tokens = extract_fn(client, comment, model)
         extracted_at = dt.datetime.now(dt.UTC).isoformat()
 
         if error:
@@ -659,6 +672,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_MODEL,
         help=f"Model to use (default: {DEFAULT_MODEL}). Provider is inferred from model name.",
     )
+    parser.add_argument(
+        "--extractor",
+        choices=["instructor", "baml"],
+        default="instructor",
+        help="Extraction backend to use (default: instructor)",
+    )
     return parser.parse_args()
 
 
@@ -683,6 +702,7 @@ def main() -> None:
         limit=args.limit,
         refresh=args.refresh,
         model=args.model,
+        extractor=args.extractor,
     )
 
 

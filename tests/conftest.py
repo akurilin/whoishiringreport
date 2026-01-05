@@ -38,12 +38,24 @@ def pytest_addoption(parser):
         default=DEFAULT_TEST_MODEL,
         help=f"Comma-separated list of models to test (default: {DEFAULT_TEST_MODEL})",
     )
+    parser.addoption(
+        "--extractors",
+        action="store",
+        default="instructor",
+        help="Comma-separated list of extractors to test: instructor,baml (default: instructor)",
+    )
 
 
 def get_test_models(config) -> list[str]:
     """Get the list of models to test based on CLI options."""
     models_str = config.getoption("--models")
     return [m.strip() for m in models_str.split(",")]
+
+
+def get_test_extractors(config) -> list[str]:
+    """Get the list of extractors to test based on CLI options."""
+    extractors_str = config.getoption("--extractors")
+    return [e.strip() for e in extractors_str.split(",")]
 
 
 def pytest_configure(config):
@@ -69,9 +81,7 @@ def pytest_configure(config):
 
 def pytest_collection_finish(session):
     """Announce stats file location when running eval tests."""
-    has_eval_tests = any(
-        "test_extraction" in item.nodeid for item in session.items
-    )
+    has_eval_tests = any("test_extraction" in item.nodeid for item in session.items)
     if has_eval_tests:
         print(f"\nStats will be saved to: {STATS_FILE}\n")
 
@@ -85,6 +95,7 @@ class ExtractionTiming:
 
     case_name: str
     model: str
+    extractor: str  # "instructor" or "baml"
     elapsed_seconds: float
     success: bool
     role_count: int = 0
@@ -96,7 +107,7 @@ class ExtractionTiming:
 class TimingReport:
     """Aggregates timing data across all extractions."""
 
-    model: str
+    key: str  # "extractor::model" combination
     extractions: list[ExtractionTiming] = field(default_factory=list)
     tests_passed: int = 0
     tests_failed: int = 0
@@ -120,15 +131,16 @@ class TimingReport:
         return sum(e.total_tokens or 0 for e in self.extractions)
 
 
-# Global timing reports (one per model)
+# Global timing reports (one per extractor::model combination)
 _timing_reports: dict[str, TimingReport] = {}
 
 
-def get_timing_report(model: str) -> TimingReport:
-    """Get or create the timing report for a model."""
-    if model not in _timing_reports:
-        _timing_reports[model] = TimingReport(model=model)
-    return _timing_reports[model]
+def get_timing_report(extractor: str, model: str) -> TimingReport:
+    """Get or create the timing report for an extractor+model combination."""
+    key = f"{extractor}::{model}"
+    if key not in _timing_reports:
+        _timing_reports[key] = TimingReport(key=key)
+    return _timing_reports[key]
 
 
 def write_stats_jsonl():
@@ -145,6 +157,7 @@ def write_stats_jsonl():
                 record = {
                     "timestamp": timestamp,
                     "model": extraction.model,
+                    "extractor": extraction.extractor,
                     "case_name": extraction.case_name,
                     "elapsed_seconds": extraction.elapsed_seconds,
                     "success": extraction.success,
@@ -155,9 +168,9 @@ def write_stats_jsonl():
                 f.write(json.dumps(record) + "\n")
 
 
-def record_test_result(model: str, passed: bool):
-    """Record a test pass/fail for a model."""
-    report = get_timing_report(model)
+def record_test_result(extractor: str, model: str, passed: bool):
+    """Record a test pass/fail for an extractor+model combination."""
+    report = get_timing_report(extractor, model)
     if passed:
         report.tests_passed += 1
     else:
@@ -185,39 +198,34 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if not _timing_reports:
         return
 
-    models = get_test_models(config)
-
     if len(_timing_reports) > 1:
         # Print comparison table
-        terminalreporter.write_sep("=", "MODEL COMPARISON")
+        terminalreporter.write_sep("=", "COMPARISON")
         terminalreporter.write_line("")
         terminalreporter.write_line(
-            f"{'Model':<25} {'Avg Time':<12} {'Passed':<10} {'Total':<12} {'Tokens':<10}"
+            f"{'Extractor::Model':<35} {'Avg Time':<12} {'Passed':<10} {'Total':<12} {'Tokens':<10}"
         )
-        terminalreporter.write_line("-" * 69)
+        terminalreporter.write_line("-" * 79)
 
-        for model in models:
-            if model in _timing_reports:
-                report = _timing_reports[model]
-                total_tests = report.tests_passed + report.tests_failed
-                tokens_str = (
-                    f"{report.total_tokens:,}" if report.total_tokens else "N/A"
-                )
-                terminalreporter.write_line(
-                    f"{model:<25} {report.avg_time:>6.2f}s      "
-                    f"{report.tests_passed}/{total_tests:<7} "
-                    f"{report.total_time:>6.2f}s      "
-                    f"{tokens_str}"
-                )
+        for key in sorted(_timing_reports.keys()):
+            report = _timing_reports[key]
+            total_tests = report.tests_passed + report.tests_failed
+            tokens_str = f"{report.total_tokens:,}" if report.total_tokens else "N/A"
+            terminalreporter.write_line(
+                f"{key:<35} {report.avg_time:>6.2f}s      "
+                f"{report.tests_passed}/{total_tests:<7} "
+                f"{report.total_time:>6.2f}s      "
+                f"{tokens_str}"
+            )
 
         terminalreporter.write_line("")
         terminalreporter.write_sep("=", "")
     else:
-        # Single model summary
-        for model, report in _timing_reports.items():
+        # Single extractor+model summary
+        for key, report in _timing_reports.items():
             if report.extractions:
                 terminalreporter.write_sep("=", "TIMING SUMMARY")
-                terminalreporter.write_line(f"Model: {report.model}")
+                terminalreporter.write_line(f"Configuration: {key}")
                 terminalreporter.write_line(
                     f"Total extractions: {len(report.extractions)}"
                 )
