@@ -72,9 +72,9 @@ Both extractors produce identical output format and can be compared using the ev
 | instructor | gpt-4o-mini | 3.06s | 11/11 | 15,603 |
 | instructor | gemini-2.0-flash-lite | 1.65s | 11/11 | 13,714 |
 | instructor | gemini-2.5-flash-lite | 1.04s | 10/11 | 17,715 |
-| baml | gpt-4o-mini | 5.83s | 11/11 | 15,176 |
-| baml | gemini-2.0-flash-lite | 2.15s | 11/11 | 17,733 |
-| baml | gemini-2.5-flash-lite | 1.37s | 11/11 | 17,863 |
+| baml | gpt-4o-mini | 5.70s | 11/11 | 11,089 |
+| baml | gemini-2.0-flash-lite | 2.41s | 11/11 | 13,273 |
+| baml | gemini-2.5-flash-lite | 1.63s | 11/11 | 13,230 |
 
 Provider is auto-detected from model name. Set `GEMINI_API_KEY` in `.env` for Gemini models.
 
