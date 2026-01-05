@@ -10,6 +10,8 @@ from __future__ import annotations
 import html
 import re
 
+from baml_py import Collector
+
 from baml_client.sync_client import b
 from baml_client.types import CommentExtraction as BamlCommentExtraction
 from baml_client.types import CompanyStage as BamlCompanyStage
@@ -142,7 +144,6 @@ def extract_from_comment_baml(
 
     Returns:
         Tuple of (extraction_result, error, total_tokens).
-        BAML doesn't expose token counts directly, so tokens is always None.
     """
     from extract_jobs import ExtractionError
 
@@ -168,16 +169,27 @@ def extract_from_comment_baml(
         # Get BAML client name for this model
         client_name = get_baml_client_name(model)
 
-        # Call BAML extraction with runtime client override
+        # Create a collector to track token usage
+        collector = Collector(name="extraction")
+
+        # Call BAML extraction with runtime client override and collector
         baml_result = b.ExtractJobData(
             comment_content=cleaned_content,
-            baml_options={"client": client_name},
+            baml_options={"client": client_name, "collector": collector},
         )
 
         # Convert to instructor-compatible format
         result = convert_baml_extraction(baml_result)
 
-        return result, None, None  # BAML doesn't expose token counts
+        # Extract token usage from collector
+        total_tokens = None
+        if collector.last and collector.last.usage:
+            usage = collector.last.usage
+            input_tokens = usage.input_tokens or 0
+            output_tokens = usage.output_tokens or 0
+            total_tokens = input_tokens + output_tokens
+
+        return result, None, total_tokens
 
     except ValueError as e:
         # Model not configured
